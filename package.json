@@ -1,0 +1,21 @@
+{
+  "name": "@token-ring/google",
+  "version": "0.1.0",
+  "dependencies": {
+    "@token-ring/chat": "0.1.0",
+    "@token-ring/eslint-config": "0.0.0",
+    "@token-ring/registry": "0.1.0",
+    "glob-gitignore": "^1.0.15",
+    "googleapis": "150.0.1"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./*": "./*.js"
+  },
+  "private": true,
+  "scripts": {
+    "lint": "eslint ",
+    "eslint": "eslint --fix ./"
+  },
+  "type": "module"
+}
