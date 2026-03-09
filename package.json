@@ -1,21 +1,32 @@
 {
-  "name": "@token-ring/google",
-  "version": "0.1.0",
+  "name": "@tokenring-ai/google",
+  "version": "0.2.0",
+  "description": "Google OAuth and Gmail integration for Token Ring",
   "dependencies": {
-    "@token-ring/chat": "0.1.0",
-    "@token-ring/eslint-config": "0.0.0",
-    "@token-ring/registry": "0.1.0",
-    "glob-gitignore": "^1.0.15",
-    "googleapis": "150.0.1"
+    "@tokenring-ai/agent": "0.2.0",
+    "@tokenring-ai/app": "0.2.0",
+    "@tokenring-ai/calendar": "0.2.0",
+    "@tokenring-ai/email": "0.2.0",
+    "@tokenring-ai/filesystem": "0.2.0",
+    "@tokenring-ai/utility": "0.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "@vitest/coverage-v8": "^4.0.18"
   },
   "exports": {
-    ".": "./index.js",
-    "./*": "./*.js"
+    ".": "./index.ts",
+    "./*": "./*.ts"
   },
-  "private": true,
+  "types": "./index.ts",
+  "license": "MIT",
+  "type": "module",
   "scripts": {
-    "lint": "eslint ",
-    "eslint": "eslint --fix ./"
-  },
-  "type": "module"
+    "test": "vitest run",
+    "build": "tsc --noEmit",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  }
 }
