@@ -1,19 +1,8 @@
 import Agent from "@tokenring-ai/agent/Agent";
-import type {AgentCreationContext} from "@tokenring-ai/agent/types";
-import type {
-  DraftEmailData,
-  EmailDraft,
-  EmailInboxFilterOptions,
-  EmailMessage,
-  EmailProvider,
-  EmailSearchOptions,
-  SentEmail,
-  UpdateDraftEmailData,
-} from "@tokenring-ai/email";
+import type {DraftEmailData, EmailDraft, EmailInboxFilterOptions, EmailMessage, EmailProvider, EmailSearchOptions} from "@tokenring-ai/email";
 import {z} from "zod";
 import GoogleService from "./GoogleService.ts";
 import {GmailEmailProviderOptionsSchema} from "./schema.ts";
-import {GmailEmailState} from "./state/GmailEmailState.ts";
 
 type GmailMessageListResponse = {
   messages?: Array<{id: string; threadId: string}>;
@@ -57,10 +46,6 @@ export default class GmailEmailProvider implements EmailProvider {
     this.account = options.account;
   }
 
-  attach(agent: Agent, _creationContext: AgentCreationContext): void {
-    agent.initializeState(GmailEmailState, {});
-  }
-
   async getInboxMessages(filter: EmailInboxFilterOptions, agent: Agent): Promise<EmailMessage[]> {
     const queryParts = ["in:inbox"];
     if (filter.unreadOnly) queryParts.push("is:unread");
@@ -73,22 +58,8 @@ export default class GmailEmailProvider implements EmailProvider {
     return await this.listMessages(queryParts.join(" ").trim(), filter.limit ?? 25, agent);
   }
 
-  async selectMessageById(id: string, agent: Agent): Promise<EmailMessage> {
-    const message = await this.getMessage(id);
-    agent.mutateState(GmailEmailState, state => {
-      state.currentMessage = message;
-    });
-    return message;
-  }
-
-  getCurrentMessage(agent: Agent): EmailMessage | null {
-    return agent.getState(GmailEmailState).currentMessage;
-  }
-
-  async clearCurrentMessage(agent: Agent): Promise<void> {
-    agent.mutateState(GmailEmailState, state => {
-      state.currentMessage = null;
-    });
+  async getMessageById(id: string, agent: Agent): Promise<EmailMessage> {
+    return await this.getMessage(id);
   }
 
   async createDraft(data: DraftEmailData, agent: Agent): Promise<EmailDraft> {
@@ -108,92 +79,40 @@ export default class GmailEmailProvider implements EmailProvider {
       "create Gmail draft",
     );
 
-    const draft = this.gmailDraftToEmailDraft(response, data);
-    agent.mutateState(GmailEmailState, state => {
-      state.currentDraft = draft;
-    });
-    return draft;
+    return this.gmailDraftToEmailDraft(response, data);
   }
 
-  async updateDraft(data: UpdateDraftEmailData, agent: Agent): Promise<EmailDraft> {
-    const currentDraft = this.getCurrentDraft(agent);
-    if (!currentDraft) {
-      throw new Error("No draft is currently selected. Create a draft before updating it.");
-    }
-
-    const mergedDraft: DraftEmailData = {
-      threadId: data.threadId ?? currentDraft.threadId,
-      subject: data.subject ?? currentDraft.subject,
-      to: data.to ?? currentDraft.to,
-      cc: data.cc ?? currentDraft.cc,
-      bcc: data.bcc ?? currentDraft.bcc,
-      textBody: data.textBody ?? currentDraft.textBody,
-      htmlBody: data.htmlBody ?? currentDraft.htmlBody,
-    };
-
-    const raw = this.encodeBase64Url(this.buildMimeMessage(mergedDraft));
+  async updateDraft(data: EmailDraft, agent: Agent): Promise<EmailDraft> {
+    const raw = this.encodeBase64Url(this.buildMimeMessage(data));
     const response = await this.googleService.fetchGoogleJson<GmailDraftResponse>(
       this.account,
-      `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${currentDraft.id}`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${data.id}`,
       {
         method: "PUT",
         body: JSON.stringify({
-          id: currentDraft.id,
+          id: data.id,
           message: {
             raw,
-            threadId: mergedDraft.threadId,
+            threadId: data.threadId,
           },
         }),
       },
       "update Gmail draft",
     );
 
-    const draft = this.gmailDraftToEmailDraft(response, mergedDraft);
-    agent.mutateState(GmailEmailState, state => {
-      state.currentDraft = draft;
-    });
-    return draft;
+    return this.gmailDraftToEmailDraft(response, data);
   }
 
-  getCurrentDraft(agent: Agent): EmailDraft | null {
-    return agent.getState(GmailEmailState).currentDraft;
-  }
-
-  async clearCurrentDraft(agent: Agent): Promise<void> {
-    agent.mutateState(GmailEmailState, state => {
-      state.currentDraft = null;
-    });
-  }
-
-  async sendCurrentDraft(agent: Agent): Promise<SentEmail> {
-    const currentDraft = this.getCurrentDraft(agent);
-    if (!currentDraft) throw new Error("No draft is currently selected. Create a draft before sending it.");
-
-    const response = await this.googleService.fetchGoogleJson<GmailSendResponse>(
+  async sendDraft(id: string, agent: Agent): Promise<void> {
+    await this.googleService.fetchGoogleJson<GmailSendResponse>(
       this.account,
       "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
       {
         method: "POST",
-        body: JSON.stringify({id: currentDraft.id}),
+        body: JSON.stringify({id}),
       },
       "send Gmail draft",
     );
-
-    const sent: SentEmail = {
-      id: response.id,
-      threadId: response.threadId ?? currentDraft.threadId,
-      subject: currentDraft.subject,
-      to: currentDraft.to,
-      cc: currentDraft.cc,
-      bcc: currentDraft.bcc,
-      sentAt: new Date(),
-    };
-
-    agent.mutateState(GmailEmailState, state => {
-      state.currentDraft = null;
-    });
-
-    return sent;
   }
 
   private async listMessages(query: string, limit: number, agent: Agent): Promise<EmailMessage[]> {
