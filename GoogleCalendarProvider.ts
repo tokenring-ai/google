@@ -1,5 +1,4 @@
 import Agent from "@tokenring-ai/agent/Agent";
-import type {AgentCreationContext} from "@tokenring-ai/agent/types";
 import type {
   CalendarEvent,
   CalendarEventFilterOptions,
@@ -11,7 +10,6 @@ import type {
 import {z} from "zod";
 import GoogleService from "./GoogleService.ts";
 import {GoogleCalendarProviderOptionsSchema} from "./schema.ts";
-import {GoogleCalendarState} from "./state/GoogleCalendarState.ts";
 
 type GoogleCalendarEventDateTime = {
   date?: string;
@@ -56,12 +54,8 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     this.calendarId = options.calendarId;
   }
 
-  attach(agent: Agent, _creationContext: AgentCreationContext): void {
-    agent.initializeState(GoogleCalendarState, {});
-  }
-
   async getUpcomingEvents(filter: CalendarEventFilterOptions, _agent: Agent): Promise<CalendarEvent[]> {
-    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(filter.calendarId ?? this.calendarId)}/events`);
+    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`);
     url.searchParams.set("singleEvents", "true");
     url.searchParams.set("orderBy", "startTime");
     url.searchParams.set("maxResults", String(filter.limit ?? 10));
@@ -79,7 +73,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
   }
 
   async searchEvents(filter: CalendarEventSearchOptions, _agent: Agent): Promise<CalendarEvent[]> {
-    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(filter.calendarId ?? this.calendarId)}/events`);
+    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`);
     url.searchParams.set("singleEvents", "true");
     url.searchParams.set("orderBy", "startTime");
     url.searchParams.set("maxResults", String(filter.limit ?? 10));
@@ -97,10 +91,10 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return (response.items ?? []).map(item => this.toCalendarEvent(item));
   }
 
-  async createEvent(data: CreateCalendarEventData, agent: Agent): Promise<CalendarEvent> {
+  async createEvent(data: CreateCalendarEventData, _agent: Agent): Promise<CalendarEvent> {
     const response = await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
       this.account,
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(data.calendarId ?? this.calendarId)}/events`,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`,
       {
         method: "POST",
         body: JSON.stringify(this.toGoogleEventBody(data)),
@@ -108,49 +102,24 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       "create Google Calendar event",
     );
 
-    const event = this.toCalendarEvent(response);
-    agent.mutateState(GoogleCalendarState, state => {
-      state.currentEvent = event;
-    });
-    return event;
+    return this.toCalendarEvent(response);
   }
 
-  async updateEvent(data: UpdateCalendarEventData, agent: Agent): Promise<CalendarEvent> {
-    const currentEvent = this.getCurrentEvent(agent);
-    if (!currentEvent) throw new Error("No calendar event is currently selected. Select or create an event first.");
-
-    const mergedEvent: UpdateCalendarEventData = {
-      calendarId: data.calendarId ?? currentEvent.calendarId,
-      title: data.title ?? currentEvent.title,
-      description: data.description ?? currentEvent.description,
-      location: data.location ?? currentEvent.location,
-      startAt: data.startAt ?? currentEvent.startAt,
-      endAt: data.endAt ?? currentEvent.endAt,
-      allDay: data.allDay ?? currentEvent.allDay,
-      attendees: data.attendees ?? currentEvent.attendees,
-      status: data.status ?? currentEvent.status,
-      url: data.url ?? currentEvent.url,
-      meetingUrl: data.meetingUrl ?? currentEvent.meetingUrl,
-    };
-
+  async updateEvent(id: string, data: UpdateCalendarEventData, agent: Agent): Promise<CalendarEvent> {
     const response = await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
       this.account,
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(mergedEvent.calendarId ?? this.calendarId)}/events/${encodeURIComponent(currentEvent.id)}`,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
       {
         method: "PUT",
-        body: JSON.stringify(this.toGoogleEventBody(mergedEvent)),
+        body: JSON.stringify(this.toGoogleEventBody(data)),
       },
       "update Google Calendar event",
     );
 
-    const event = this.toCalendarEvent(response);
-    agent.mutateState(GoogleCalendarState, state => {
-      state.currentEvent = event;
-    });
-    return event;
+    return this.toCalendarEvent(response);
   }
 
-  async selectEventById(id: string, agent: Agent): Promise<CalendarEvent> {
+  async selectEventById(id: string, _agent: Agent): Promise<CalendarEvent> {
     const response = await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
       this.account,
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
@@ -158,43 +127,21 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       `fetch Google Calendar event ${id}`,
     );
 
-    const event = this.toCalendarEvent(response);
-    agent.mutateState(GoogleCalendarState, state => {
-      state.currentEvent = event;
-    });
-    return event;
+    return this.toCalendarEvent(response);
   }
 
-  getCurrentEvent(agent: Agent): CalendarEvent | null {
-    return agent.getState(GoogleCalendarState).currentEvent;
-  }
-
-  async clearCurrentEvent(agent: Agent): Promise<void> {
-    agent.mutateState(GoogleCalendarState, state => {
-      state.currentEvent = null;
-    });
-  }
-
-  async deleteCurrentEvent(agent: Agent): Promise<void> {
-    const currentEvent = this.getCurrentEvent(agent);
-    if (!currentEvent) throw new Error("No calendar event is currently selected.");
-
+  async deleteEvent(id: string, _agent: Agent): Promise<void> {
     await this.googleService.fetchGoogleRaw(
       this.account,
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(currentEvent.calendarId ?? this.calendarId)}/events/${encodeURIComponent(currentEvent.id)}`,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
       {method: "DELETE"},
       "delete Google Calendar event",
     );
-
-    agent.mutateState(GoogleCalendarState, state => {
-      state.currentEvent = null;
-    });
   }
 
   private toCalendarEvent(item: GoogleCalendarEventResponse): CalendarEvent {
     return {
       id: item.id,
-      calendarId: this.calendarId,
       title: item.summary ?? "(untitled event)",
       description: item.description,
       location: item.location,
@@ -209,8 +156,8 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       status: item.status,
       url: item.htmlLink,
       meetingUrl: item.hangoutLink,
-      createdAt: item.created ? new Date(item.created) : undefined,
-      updatedAt: item.updated ? new Date(item.updated) : undefined,
+      createdAt: item.created ? Date.parse(item.created) : undefined,
+      updatedAt: item.updated ? Date.parse(item.updated) : undefined,
     };
   }
 
