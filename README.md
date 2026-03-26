@@ -41,8 +41,17 @@ import GooglePlugin from "@tokenring-ai/google/plugin";
 
 Main service for Google OAuth and authenticated HTTP requests.
 
+**Implements:** `TokenRingService`
+
+**Methods:**
+
 ```ts
 class GoogleService implements TokenRingService {
+  readonly name: string;
+  readonly description: string;
+
+  constructor(options: GoogleConfig);
+
   getAvailableAccounts(): string[];
   getDefaultAccountName(): string | undefined;
   getAccount(name?: string): GoogleAccount;
@@ -56,53 +65,158 @@ class GoogleService implements TokenRingService {
 }
 ```
 
+**Method Details:**
+
+- `getAvailableAccounts()`: Returns list of configured account names
+- `getDefaultAccountName()`: Returns the configured default account name, or undefined
+- `getAccount(name?)`: Returns the account configuration, throws if not found
+- `getUserEmail(name?)`: Returns the email address for the account
+- `createAuthorizationUrl(name?, options?)`: Generates OAuth authorization URL with configurable scopes, state, access type, and prompt
+- `exchangeAuthorizationCode(name, code)`: Exchanges OAuth code for tokens, updates account with refresh token and access token
+- `refreshAccessToken(name?)`: Refreshes expired access token using refresh token
+- `getAccessToken(name?)`: Returns valid access token, refreshing if necessary
+- `fetchGoogleJson(name, url, init, context)`: Makes authenticated request and parses JSON response
+- `fetchGoogleRaw(name, url, init, context)`: Makes authenticated request and returns raw Response
+
+**Authorization Options:**
+
+```ts
+type AuthorizationOptions = {
+  state?: string;
+  scopes?: string[];
+  accessType?: "offline" | "online";
+  prompt?: "consent" | "none" | "select_account";
+  loginHint?: string;
+};
+```
+
 ### `GmailEmailProvider`
 
 Concrete `EmailProvider` implementation for Gmail.
 
-Capabilities:
+**Implements:** `EmailProvider`
 
-- list inbox messages
-- search messages
-- select current message
-- create and update drafts
-- send the current draft
+**Capabilities:**
+
+- List inbox messages with filtering (unread/read)
+- Search messages with query and filtering
+- Select specific message by ID
+- Create and update drafts
+- Send the current draft
+
+**Methods:**
+
+```ts
+class GmailEmailProvider implements EmailProvider {
+  readonly description: string;
+
+  constructor(options: GmailEmailProviderOptions, googleService: GoogleService);
+
+  getInboxMessages(filter: EmailInboxFilterOptions, agent: Agent): Promise<EmailMessage[]>;
+  searchMessages(filter: EmailSearchOptions, agent: Agent): Promise<EmailMessage[]>;
+  getMessageById(id: string, agent: Agent): Promise<EmailMessage>;
+  createDraft(data: DraftEmailData, agent: Agent): Promise<EmailDraft>;
+  updateDraft(data: EmailDraft, agent: Agent): Promise<EmailDraft>;
+  sendDraft(id: string, agent: Agent): Promise<void>;
+}
+```
+
+**Supported Operations:**
+
+- `getInboxMessages()`: Lists messages from inbox with optional unread filter
+- `searchMessages()`: Searches messages with query string and optional unread filter
+- `getMessageById()`: Fetches full message content by ID
+- `createDraft()`: Creates a new draft with to, cc, bcc, subject, and body
+- `updateDraft()`: Updates an existing draft
+- `sendDraft()`: Sends the draft by ID
 
 ### `GoogleCalendarProvider`
 
 Concrete `CalendarProvider` implementation for Google Calendar.
 
-Capabilities:
+**Implements:** `CalendarProvider`
 
-- list upcoming events
-- search events
-- select current event
-- create events
-- update the current event
-- delete the current event
+**Capabilities:**
+
+- List upcoming events with time range filtering
+- Search events with query and time range
+- Select specific event by ID
+- Create events
+- Update the current event
+- Delete the current event
+
+**Methods:**
+
+```ts
+class GoogleCalendarProvider implements CalendarProvider {
+  readonly description: string;
+
+  constructor(options: GoogleCalendarProviderOptions, googleService: GoogleService);
+
+  getUpcomingEvents(filter: CalendarEventFilterOptions, agent: Agent): Promise<CalendarEvent[]>;
+  searchEvents(filter: CalendarEventSearchOptions, agent: Agent): Promise<CalendarEvent[]>;
+  createEvent(data: CreateCalendarEventData, agent: Agent): Promise<CalendarEvent>;
+  updateEvent(id: string, data: UpdateCalendarEventData, agent: Agent): Promise<CalendarEvent>;
+  selectEventById(id: string, agent: Agent): Promise<CalendarEvent>;
+  deleteEvent(id: string, agent: Agent): Promise<void>;
+}
+```
+
+**Supported Operations:**
+
+- `getUpcomingEvents()`: Lists upcoming events from the calendar with time range and limit
+- `searchEvents()`: Searches events by query string within time range
+- `createEvent()`: Creates a new event with title, description, location, attendees, and timing
+- `updateEvent()`: Updates an existing event by ID
+- `selectEventById()`: Fetches a specific event by ID
+- `deleteEvent()`: Deletes an event by ID
 
 ### `GoogleDriveFileSystemProvider`
 
 Concrete `FileSystemProvider` implementation for Google Drive.
 
-Capabilities:
+**Implements:** `FileSystemProvider`
 
-- list directories
-- read files
-- write and append files
-- rename and move files
-- copy files
-- create folders
-- delete files
-- stat and existence checks
+**Capabilities:**
 
-Unsupported filesystem operations:
+- List directories with tree generation
+- Read files
+- Write and append files
+- Rename and move files
+- Copy files
+- Create folders
+- Delete files
+- Stat and existence checks
 
-- `glob`
-- `grep`
-- `watch`
+**Methods:**
 
-These are intentionally unsupported because the Drive API does not provide equivalent behavior to the local filesystem providers.
+```ts
+class GoogleDriveFileSystemProvider implements FileSystemProvider {
+  readonly name: string;
+  readonly description: string;
+
+  constructor(options: GoogleDriveFileSystemProviderOptions, googleService: GoogleService);
+
+  writeFile(filePath: string, content: string | Buffer): Promise<boolean>;
+  appendFile(filePath: string, content: string | Buffer): Promise<boolean>;
+  deleteFile(filePath: string): Promise<boolean>;
+  readFile(filePath: string): Promise<Buffer | null>;
+  rename(oldPath: string, newPath: string): Promise<boolean>;
+  exists(filePath: string): Promise<boolean>;
+  stat(filePath: string): Promise<StatLike>;
+  createDirectory(dirPath: string, options?: {recursive?: boolean}): Promise<boolean>;
+  copy(source: string, destination: string, options?: {overwrite?: boolean}): Promise<boolean>;
+  getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string>;
+}
+```
+
+**Unsupported filesystem operations:**
+
+The following methods throw errors because the Drive API does not provide equivalent behavior to local filesystem providers:
+
+- `glob()` - Pattern-based file matching not supported
+- `watch()` - File system watching not supported
+- `grep()` - Content search across files not supported
 
 ## Usage Examples
 
@@ -245,8 +359,19 @@ The package is configured under the `google` key, and optionally under the abstr
   - `expiryDate?: number`
   - `scopes: string[]`
 - `GmailEmailProviderOptionsSchema`
+  - `type: "gmail" | "google"`
+  - `description: string`
+  - `account: string`
 - `GoogleCalendarProviderOptionsSchema`
+  - `type: "google-calendar" | "gcal"`
+  - `description: string`
+  - `account: string`
+  - `calendarId: string` (default: "primary")
 - `GoogleDriveFileSystemProviderOptionsSchema`
+  - `type: "google-drive" | "gdrive"`
+  - `description: string` (default: "Google Drive filesystem")
+  - `account: string`
+  - `rootFolderId: string` (default: "root")
 
 ## Integration
 
@@ -271,10 +396,10 @@ This means `@tokenring-ai/google` is typically used alongside:
 
 Important behavior:
 
-- refreshed access tokens are stored in the service instance
-- refresh tokens returned during code exchange are also kept in memory
-- provider-specific state, such as current Gmail message, current Gmail draft, or current calendar event, is stored in provider-local agent state slices
-- token persistence is intentionally left to the integrating application
+- Refreshed access tokens are stored in the service instance
+- Refresh tokens returned during code exchange are also kept in memory
+- Provider-specific state, such as current Gmail message, current Gmail draft, or current calendar event, is stored in provider-local agent state slices
+- Token persistence is intentionally left to the integrating application
 
 ## Best Practices
 
@@ -282,6 +407,29 @@ Important behavior:
 - Persist refreshed credentials outside the service if long-lived operation matters.
 - Limit provider scopes to what the application needs when possible.
 - Treat Google Drive as an API-backed virtual filesystem, not a drop-in POSIX replacement.
+- Be aware that `glob`, `watch`, and `grep` operations are not supported due to Drive API limitations.
+
+## Testing
+
+The package uses vitest for unit testing.
+
+**Run tests:**
+
+```bash
+bun test
+```
+
+**Run tests in watch mode:**
+
+```bash
+bun test:watch
+```
+
+**Generate test coverage:**
+
+```bash
+bun test:coverage
+```
 
 ## Dependencies
 
@@ -297,4 +445,4 @@ Key runtime dependencies:
 
 ## License
 
-MIT License - see [LICENSE](/home/mdierolf/gitprojects/tokenring/pkg/google/LICENSE).
+MIT License - see LICENSE file for details.
