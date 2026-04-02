@@ -19,6 +19,25 @@ type GoogleUserInfoResponse = {
   email?: string;
 };
 
+type GoogleApiErrorResponse = {
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+    errors?: Array<{
+      domain?: string;
+      message?: string;
+      reason?: string;
+    }>;
+    details?: Array<{
+      "@type"?: string;
+      domain?: string;
+      reason?: string;
+      metadata?: Record<string, string>;
+    }>;
+  };
+};
+
 type RuntimeGoogleAccount = z.output<typeof GoogleAccountSchema>;
 type StoredGoogleToken = z.output<typeof GoogleStoredTokenSchema>;
 type PendingAuthorization = {
@@ -260,9 +279,7 @@ export default class GoogleService implements TokenRingService {
       } catch {
         json = text;
       }
-      const error = new Error(`${context} failed (${res.status})`);
-      (error as Error & {details?: unknown}).details = json;
-      throw error;
+      throw this.createGoogleApiError(accountName, url, init, context, res.status, json);
     }
     return res;
   }
@@ -286,9 +303,7 @@ export default class GoogleService implements TokenRingService {
       } catch {
         json = text;
       }
-      const error = new Error(`${context} failed (${res.status})`);
-      (error as Error & {details?: unknown}).details = json;
-      throw error;
+      throw this.createGoogleApiError(accountName, url, init, context, res.status, json);
     }
 
     return res;
@@ -329,6 +344,9 @@ export default class GoogleService implements TokenRingService {
     if (tokens.refresh_token) {
       account.refreshToken = tokens.refresh_token;
     }
+    if (tokens.scope) {
+      account.grantedScopes = tokens.scope.split(/\s+/).filter(Boolean);
+    }
   }
 
   private getDefaultScopes(account: RuntimeGoogleAccount): string[] {
@@ -363,6 +381,7 @@ export default class GoogleService implements TokenRingService {
       refreshToken: account.refreshToken,
       accessToken: account.accessToken,
       expiryDate: account.expiryDate,
+      grantedScopes: account.grantedScopes,
     });
   }
 
@@ -372,6 +391,81 @@ export default class GoogleService implements TokenRingService {
     account.refreshToken = tokens.refreshToken;
     account.accessToken = tokens.accessToken;
     account.expiryDate = tokens.expiryDate;
+    account.grantedScopes = tokens.grantedScopes;
+  }
+
+  private createGoogleApiError(accountName: string, url: string, init: RequestInit, context: string, status: number, details: unknown): Error {
+    const googleMessage = this.getGoogleApiErrorMessage(details);
+    const missingScopes = this.getMissingGrantedScopes(accountName, url, init.method);
+
+    let message = `${context} failed (${status})`;
+    if (status === 403 && (this.isInsufficientScopeError(details) || missingScopes.length > 0)) {
+      const scopeMessage = missingScopes.length
+        ? ` Missing scope${missingScopes.length === 1 ? "" : "s"}: ${missingScopes.join(", ")}.`
+        : "";
+      message = `${context} failed (${status}): Google account "${accountName}" is authenticated, but it is missing permission for this request.${scopeMessage} Re-run /google account auth ${accountName} to grant access.`;
+    } else if (googleMessage) {
+      message = `${context} failed (${status}): ${googleMessage}`;
+    }
+
+    const error = new Error(message);
+    (error as Error & {details?: unknown}).details = details;
+    return error;
+  }
+
+  private getGoogleApiErrorMessage(details: unknown): string | undefined {
+    if (!details || typeof details !== "object") return typeof details === "string" ? details : undefined;
+    const googleError = (details as GoogleApiErrorResponse).error;
+    if (!googleError) return undefined;
+    if (googleError.message) return googleError.message;
+    const nestedMessage = googleError.errors?.find(entry => entry.message)?.message;
+    return nestedMessage;
+  }
+
+  private isInsufficientScopeError(details: unknown): boolean {
+    if (!details || typeof details !== "object") return false;
+    const googleError = (details as GoogleApiErrorResponse).error;
+    if (!googleError) return false;
+    if (googleError.status === "PERMISSION_DENIED" && googleError.message?.toLowerCase().includes("scope")) {
+      return true;
+    }
+
+    return [
+      ...(googleError.errors ?? []).map(entry => entry.reason),
+      ...(googleError.details ?? []).map(entry => entry.reason),
+    ].some(reason => reason === "insufficientPermissions" || reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT");
+  }
+
+  private getMissingGrantedScopes(accountName: string, url: string, method?: string): string[] {
+    const grantedScopes = new Set(this.requireAccount(accountName).grantedScopes ?? []);
+    if (grantedScopes.size === 0) return [];
+
+    return this.getRequiredScopesForRequest(url, method)
+      .filter(scope => !grantedScopes.has(scope));
+  }
+
+  private getRequiredScopesForRequest(url: string, method?: string): string[] {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return [];
+    }
+
+    if (parsed.hostname === "www.googleapis.com" && parsed.pathname.startsWith("/calendar/")) {
+      return DEFAULT_CALENDAR_SCOPES;
+    }
+    if (parsed.hostname === "www.googleapis.com" && parsed.pathname.startsWith("/drive/")) {
+      return DEFAULT_DRIVE_SCOPES;
+    }
+    if (parsed.hostname !== "gmail.googleapis.com") {
+      return [];
+    }
+
+    const normalizedMethod = (method ?? "GET").toUpperCase();
+    if (normalizedMethod === "GET") return ["https://www.googleapis.com/auth/gmail.readonly"];
+    if (parsed.pathname.endsWith("/drafts/send")) return ["https://www.googleapis.com/auth/gmail.send"];
+    return ["https://www.googleapis.com/auth/gmail.compose"];
   }
 
   private async syncAccountProfile(accountName: string): Promise<string> {

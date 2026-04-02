@@ -1,6 +1,5 @@
 import FileSystemProvider, {
   type DirectoryTreeOptions,
-  type GlobOptions,
   type GrepOptions,
   type GrepResult,
   type StatLike,
@@ -422,10 +421,6 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
 
     this.invalidateCache();
     return true;
-  }
-
-  async glob(_pattern: string, _options?: GlobOptions): Promise<string[]> {
-    throw new Error("Method glob is not supported by GoogleDriveFileSystemProvider.");
   }
 
   async watch(_dir: string, _options?: WatchOptions): Promise<any> {

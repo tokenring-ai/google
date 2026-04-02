@@ -21,6 +21,7 @@ export const GoogleAccountSchema = z.object({
   refreshToken: z.string().optional(),
   accessToken: z.string().optional(),
   expiryDate: z.number().optional(),
+  grantedScopes: z.array(z.string()).optional(),
   scopes: z.array(z.string()).optional(),
   email: GoogleAccountEmailSchema.optional(),
   calendar: GoogleAccountCalendarSchema.optional(),
@@ -32,6 +33,7 @@ export const GoogleStoredTokenSchema = z.object({
   refreshToken: z.string().optional(),
   accessToken: z.string().optional(),
   expiryDate: z.number().optional(),
+  grantedScopes: z.array(z.string()).optional(),
 });
 
 export const GoogleAgentOptionsSchema = z.object({

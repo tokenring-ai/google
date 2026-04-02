@@ -1,10 +1,28 @@
-import type {DraftEmailData, EmailDraft, EmailInboxFilterOptions, EmailMessage, EmailProvider, EmailSearchOptions} from "@tokenring-ai/email";
+import type {
+  DraftEmailData,
+  EmailBox,
+  EmailDraft,
+  EmailMessage,
+  EmailMessagePage,
+  EmailMessageQueryOptions,
+  EmailProvider,
+  EmailSearchOptions,
+} from "@tokenring-ai/email";
 import {z} from "zod";
 import GoogleService from "./GoogleService.ts";
 import {GmailEmailProviderOptionsSchema} from "./schema.ts";
 
 type GmailMessageListResponse = {
   messages?: Array<{id: string; threadId: string}>;
+  nextPageToken?: string;
+};
+
+type GmailLabelListResponse = {
+  labels?: Array<{
+    id: string;
+    name: string;
+    type?: "system" | "user";
+  }>;
 };
 
 type GmailHeader = {name?: string; value?: string};
@@ -33,6 +51,14 @@ type GmailSendResponse = {
   labelIds?: string[];
 };
 
+const gmailSystemBoxes = [
+  {id: "inbox", name: "Inbox", query: "in:inbox", labelName: "INBOX"},
+  {id: "sent", name: "Sent", query: "in:sent", labelName: "SENT"},
+  {id: "drafts", name: "Drafts", query: "in:drafts", labelName: "DRAFT"},
+  {id: "spam", name: "Spam", query: "in:spam", labelName: "SPAM"},
+  {id: "trash", name: "Trash", query: "in:trash", labelName: "TRASH"},
+] as const;
+
 export default class GmailEmailProvider implements EmailProvider {
   description: string;
   private readonly account: string;
@@ -45,16 +71,31 @@ export default class GmailEmailProvider implements EmailProvider {
     this.account = options.account;
   }
 
-  async getInboxMessages(filter: EmailInboxFilterOptions): Promise<EmailMessage[]> {
-    const queryParts = ["in:inbox"];
+  async listBoxes(): Promise<EmailBox[]> {
+    const response = await this.googleService.fetchGoogleJson<GmailLabelListResponse>(
+      this.account,
+      "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+      {method: "GET"},
+      "list Gmail labels",
+    );
+
+    const availableLabelNames = new Set((response.labels ?? []).map(label => label.name));
+    return gmailSystemBoxes
+      .filter(box => availableLabelNames.has(box.labelName))
+      .map(({id, name}) => ({id, name}));
+  }
+
+  async getMessages(filter: EmailMessageQueryOptions): Promise<EmailMessagePage> {
+    const queryParts = [this.getBoxQuery(filter.box ?? "inbox")];
     if (filter.unreadOnly) queryParts.push("is:unread");
-    return await this.listMessages(queryParts.join(" "), filter.limit ?? 25);
+    return await this.listMessages(queryParts.filter(Boolean).join(" "), filter.limit ?? 25, filter.pageToken);
   }
 
   async searchMessages(filter: EmailSearchOptions): Promise<EmailMessage[]> {
-    const queryParts = [filter.query];
+    const queryParts = [filter.query, this.getBoxQuery(filter.box ?? "inbox")];
     if (filter.unreadOnly) queryParts.push("is:unread");
-    return await this.listMessages(queryParts.join(" ").trim(), filter.limit ?? 25);
+    const page = await this.listMessages(queryParts.filter(Boolean).join(" ").trim(), filter.limit ?? 25);
+    return page.messages;
   }
 
   async getMessageById(id: string): Promise<EmailMessage> {
@@ -114,10 +155,11 @@ export default class GmailEmailProvider implements EmailProvider {
     );
   }
 
-  private async listMessages(query: string, limit: number): Promise<EmailMessage[]> {
+  private async listMessages(query: string, limit: number, pageToken?: string): Promise<EmailMessagePage> {
     const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
     url.searchParams.set("maxResults", limit.toString());
     if (query) url.searchParams.set("q", query);
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
 
     const list = await this.googleService.fetchGoogleJson<GmailMessageListResponse>(
       this.account,
@@ -129,7 +171,10 @@ export default class GmailEmailProvider implements EmailProvider {
     const messageIds = list.messages ?? [];
     const messages = await Promise.all(messageIds.map(message => this.getMessage(message.id)));
 
-    return messages;
+    return {
+      messages,
+      nextPageToken: list.nextPageToken,
+    };
   }
 
   private async getMessage(id: string): Promise<EmailMessage> {
@@ -243,6 +288,18 @@ export default class GmailEmailProvider implements EmailProvider {
     const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
     const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
     return Buffer.from(`${normalized}${padding}`, "base64").toString("utf8");
+  }
+
+  private getBoxQuery(box: string): string {
+    const normalizedBox = box.trim().toLowerCase();
+    const systemBox = gmailSystemBoxes.find(candidate => candidate.id === normalizedBox);
+    if (systemBox) return systemBox.query;
+
+    return `label:${this.escapeGmailQueryValue(box)}`;
+  }
+
+  private escapeGmailQueryValue(value: string): string {
+    return JSON.stringify(value.trim());
   }
 
   private collectHeaders(part?: GmailPart): GmailHeader[] {

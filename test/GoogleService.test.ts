@@ -105,6 +105,10 @@ describe("GoogleService", () => {
         access_token: "access-token",
         refresh_token: "refresh-token",
         expires_in: 3600,
+        scope: [
+          "https://www.googleapis.com/auth/userinfo.email",
+          "https://www.googleapis.com/auth/gmail.readonly",
+        ].join(" "),
         token_type: "Bearer",
       }), {
         status: 200,
@@ -141,7 +145,57 @@ describe("GoogleService", () => {
       userEmail: "me@example.com",
       refreshToken: "refresh-token",
       accessToken: "access-token",
+      grantedScopes: [
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/gmail.readonly",
+      ],
     });
     expect(typeof stored?.expiryDate).toBe("number");
+  });
+
+  it("explains when Calendar access fails because the token is missing the Calendar scope", async () => {
+    const service = new GoogleService(GoogleConfigSchema.parse({
+      accounts: {
+        primary: {
+          clientId: "client-id",
+          clientSecret: "client-secret",
+          accessToken: "access-token",
+          expiryDate: Date.now() + 60_000,
+          grantedScopes: [
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/gmail.readonly",
+          ],
+          email: {
+            description: "Gmail",
+          },
+          calendar: {
+            description: "Calendar",
+            calendarId: "primary",
+          },
+        },
+      },
+    }));
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: 403,
+        message: "Request had insufficient authentication scopes.",
+        status: "PERMISSION_DENIED",
+      },
+    }), {
+      status: 403,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })));
+
+    await expect(service.fetchGoogleRaw(
+      "primary",
+      "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+      {method: "GET"},
+      "list Google Calendar events",
+    )).rejects.toThrow(
+      'list Google Calendar events failed (403): Google account "primary" is authenticated, but it is missing permission for this request. Missing scope: https://www.googleapis.com/auth/calendar. Re-run /google account auth primary to grant access.',
+    );
   });
 });
