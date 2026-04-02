@@ -1,96 +1,95 @@
-import {TokenRingPlugin} from "@tokenring-ai/app";
-import {CalendarConfigSchema, CalendarService} from "@tokenring-ai/calendar";
-import {EmailConfigSchema, EmailService} from "@tokenring-ai/email";
+import {AgentCommandService} from "@tokenring-ai/agent";
+import TokenRingApp, {TokenRingPlugin} from "@tokenring-ai/app";
+import {CalendarService} from "@tokenring-ai/calendar";
+import {EmailService} from "@tokenring-ai/email";
 import FileSystemService from "../filesystem/FileSystemService.ts";
-import {FileSystemConfigSchema} from "../filesystem/schema.ts";
+import VaultService from "../vault/VaultService.ts";
+import {WebHostService} from "../web-host/index.ts";
 import {z} from "zod";
 import GoogleCalendarProvider from "./GoogleCalendarProvider.ts";
 import GoogleDriveFileSystemProvider from "./GoogleDriveFileSystemProvider.ts";
+import GoogleOAuthCallbackResource from "./GoogleOAuthCallbackResource.ts";
 import GmailEmailProvider from "./GmailEmailProvider.ts";
 import GoogleService from "./GoogleService.ts";
+import agentCommands from "./commands.ts";
 import packageJSON from "./package.json" with {type: "json"};
-import {
-  GmailEmailProviderOptionsSchema,
-  GoogleCalendarProviderOptionsSchema,
-  GoogleConfigSchema,
-  GoogleDriveFileSystemProviderOptionsSchema,
-} from "./schema.ts";
+import {GoogleConfigSchema, type GoogleAccount} from "./schema.ts";
 
 const packageConfigSchema = z.object({
-  google: GoogleConfigSchema.optional(),
-  calendar: CalendarConfigSchema.optional(),
-  email: EmailConfigSchema.optional(),
-  filesystem: FileSystemConfigSchema.optional(),
+  google: GoogleConfigSchema.prefault({accounts: {}}),
 });
+
+function addAccountsFromEnv(accounts: Record<string, GoogleAccount>) {
+  for (const [key, value] of Object.entries(process.env)) {
+    const match = key.match(/^GOOGLE_CLIENT_ID(\d*)$/);
+    if (!match || !value) continue;
+    const n = match[1];
+    const clientSecret = process.env[`GOOGLE_CLIENT_SECRET${n}`];
+    if (!clientSecret) continue;
+    const userEmail = process.env[`GOOGLE_USER_EMAIL${n}`];
+    const defaultName = `google-${n || "1"}`;
+    const name = process.env[`GOOGLE_ACCOUNT_NAME${n}`] ?? userEmail ?? defaultName;
+    accounts[name] = {
+      clientId: value,
+      clientSecret,
+      userEmail,
+      refreshToken: process.env[`GOOGLE_REFRESH_TOKEN${n}`],
+      accessToken: process.env[`GOOGLE_ACCESS_TOKEN${n}`],
+      email: { description: "Gmail" },
+      calendar: { description: "Google Calendar", calendarId: "primary" },
+      drive: {description: "Google Drive", rootFolderId: "root"}
+    };
+  }
+}
 
 export default {
   name: packageJSON.name,
   version: packageJSON.version,
   description: packageJSON.description,
   install(app, config) {
-    let googleService: GoogleService | undefined;
+    addAccountsFromEnv(config.google.accounts);
 
-    if (config.google) {
-      googleService = new GoogleService(config.google);
-      app.services.register(googleService);
+    const googleService = new GoogleService(GoogleConfigSchema.parse(config.google));
+    app.addServices(googleService);
 
-      if (config.email) {
+    app.waitForService(VaultService, vaultService => {
+      googleService.setVaultService(vaultService);
+    });
+    app.waitForService(AgentCommandService, commandService => {
+      commandService.addAgentCommands(agentCommands);
+    });
+
+    for (const [name, account] of Object.entries(config.google.accounts)) {
+      if (account.email) {
         app.services.waitForItemByType(EmailService, emailService => {
-          if (!googleService) {
-            throw new Error("Google email providers require google configuration");
-          }
-
-          for (const name in config.email!.providers) {
-            const provider = config.email!.providers[name];
-            if (provider.type === "gmail" || provider.type === "google") {
-              emailService.registerEmailProvider(
-                name,
-                new GmailEmailProvider(GmailEmailProviderOptionsSchema.parse(provider), googleService),
-              );
-            }
-          }
+          emailService.registerEmailProvider(
+            name,
+            new GmailEmailProvider({description: account.email!.description, account: name}, googleService),
+          );
         });
       }
 
-      if (config.calendar) {
+      if (account.calendar) {
         app.services.waitForItemByType(CalendarService, calendarService => {
-          if (!googleService) {
-            throw new Error("Google calendar providers require google configuration");
-          }
-
-          for (const name in config.calendar!.providers) {
-            const provider = config.calendar!.providers[name];
-            if (provider.type === "google-calendar" || provider.type === "gcal") {
-              calendarService.registerCalendarProvider(
-                name,
-                new GoogleCalendarProvider(GoogleCalendarProviderOptionsSchema.parse(provider), googleService),
-              );
-            }
-          }
+          calendarService.registerCalendarProvider(
+            name,
+            new GoogleCalendarProvider({description: account.calendar!.description, account: name, calendarId: account.calendar!.calendarId}, googleService),
+          );
         });
       }
 
-      if (config.filesystem) {
+      if (account.drive) {
         app.services.waitForItemByType(FileSystemService, fileSystemService => {
-          if (!googleService) {
-            throw new Error("Google filesystem providers require google configuration");
-          }
-
-          for (const name in config.filesystem!.providers) {
-            const provider = config.filesystem!.providers[name];
-            if (provider.type === "google-drive" || provider.type === "gdrive") {
-              fileSystemService.registerFileSystemProvider(
-                name,
-                new GoogleDriveFileSystemProvider(
-                  GoogleDriveFileSystemProviderOptionsSchema.parse(provider),
-                  googleService,
-                ),
-              );
-            }
-          }
+          fileSystemService.registerFileSystemProvider(
+            name,
+            new GoogleDriveFileSystemProvider({description: account.drive!.description, account: name, rootFolderId: account.drive!.rootFolderId}, googleService),
+          );
         });
       }
     }
+    app.services.waitForItemByType(WebHostService, webHostService => {
+      webHostService.registerResource("google-oauth-callback", new GoogleOAuthCallbackResource(googleService));
+    });
   },
   config: packageConfigSchema,
 } satisfies TokenRingPlugin<typeof packageConfigSchema>;

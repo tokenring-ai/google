@@ -8,7 +8,9 @@
     "@tokenring-ai/calendar": "0.2.0",
     "@tokenring-ai/email": "0.2.0",
     "@tokenring-ai/filesystem": "0.2.0",
+    "@tokenring-ai/vault": "0.2.0",
     "@tokenring-ai/utility": "0.2.0",
+    "@tokenring-ai/web-host": "0.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

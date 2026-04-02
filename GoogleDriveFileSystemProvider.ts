@@ -5,7 +5,7 @@ import FileSystemProvider, {
   type GrepResult,
   type StatLike,
   type WatchOptions,
-} from "../filesystem/FileSystemProvider.ts";
+} from "@tokenring-ai/filesystem/FileSystemProvider";
 import {z} from "zod";
 import GoogleService from "./GoogleService.ts";
 import {GoogleDriveFileSystemProviderOptionsSchema} from "./schema.ts";

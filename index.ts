@@ -5,6 +5,7 @@ export {default as GmailEmailProvider} from "./GmailEmailProvider.ts";
 export {
   GoogleAccountSchema,
   GoogleConfigSchema,
+  GoogleStoredTokenSchema,
   GoogleCalendarProviderOptionsSchema,
   GoogleDriveFileSystemProviderOptionsSchema,
   GmailEmailProviderOptionsSchema,

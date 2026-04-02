@@ -1,4 +1,3 @@
-import Agent from "@tokenring-ai/agent/Agent";
 import type {
   CalendarEvent,
   CalendarEventFilterOptions,
@@ -54,7 +53,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     this.calendarId = options.calendarId;
   }
 
-  async getUpcomingEvents(filter: CalendarEventFilterOptions, _agent: Agent): Promise<CalendarEvent[]> {
+  async getUpcomingEvents(filter: CalendarEventFilterOptions): Promise<CalendarEvent[]> {
     const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`);
     url.searchParams.set("singleEvents", "true");
     url.searchParams.set("orderBy", "startTime");
@@ -72,7 +71,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return (response.items ?? []).map(item => this.toCalendarEvent(item));
   }
 
-  async searchEvents(filter: CalendarEventSearchOptions, _agent: Agent): Promise<CalendarEvent[]> {
+  async searchEvents(filter: CalendarEventSearchOptions): Promise<CalendarEvent[]> {
     const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`);
     url.searchParams.set("singleEvents", "true");
     url.searchParams.set("orderBy", "startTime");
@@ -91,7 +90,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return (response.items ?? []).map(item => this.toCalendarEvent(item));
   }
 
-  async createEvent(data: CreateCalendarEventData, _agent: Agent): Promise<CalendarEvent> {
+  async createEvent(data: CreateCalendarEventData): Promise<CalendarEvent> {
     const response = await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
       this.account,
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`,
@@ -105,7 +104,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return this.toCalendarEvent(response);
   }
 
-  async updateEvent(id: string, data: UpdateCalendarEventData, agent: Agent): Promise<CalendarEvent> {
+  async updateEvent(id: string, data: UpdateCalendarEventData): Promise<CalendarEvent> {
     const response = await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
       this.account,
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
@@ -119,7 +118,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return this.toCalendarEvent(response);
   }
 
-  async selectEventById(id: string, _agent: Agent): Promise<CalendarEvent> {
+  async getEventById(id: string): Promise<CalendarEvent> {
     const response = await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
       this.account,
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
@@ -130,7 +129,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return this.toCalendarEvent(response);
   }
 
-  async deleteEvent(id: string, _agent: Agent): Promise<void> {
+  async deleteEvent(id: string): Promise<void> {
     await this.googleService.fetchGoogleRaw(
       this.account,
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,

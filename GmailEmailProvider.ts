@@ -1,4 +1,3 @@
-import Agent from "@tokenring-ai/agent/Agent";
 import type {DraftEmailData, EmailDraft, EmailInboxFilterOptions, EmailMessage, EmailProvider, EmailSearchOptions} from "@tokenring-ai/email";
 import {z} from "zod";
 import GoogleService from "./GoogleService.ts";
@@ -46,24 +45,24 @@ export default class GmailEmailProvider implements EmailProvider {
     this.account = options.account;
   }
 
-  async getInboxMessages(filter: EmailInboxFilterOptions, agent: Agent): Promise<EmailMessage[]> {
+  async getInboxMessages(filter: EmailInboxFilterOptions): Promise<EmailMessage[]> {
     const queryParts = ["in:inbox"];
     if (filter.unreadOnly) queryParts.push("is:unread");
-    return await this.listMessages(queryParts.join(" "), filter.limit ?? 25, agent);
+    return await this.listMessages(queryParts.join(" "), filter.limit ?? 25);
   }
 
-  async searchMessages(filter: EmailSearchOptions, agent: Agent): Promise<EmailMessage[]> {
+  async searchMessages(filter: EmailSearchOptions): Promise<EmailMessage[]> {
     const queryParts = [filter.query];
     if (filter.unreadOnly) queryParts.push("is:unread");
-    return await this.listMessages(queryParts.join(" ").trim(), filter.limit ?? 25, agent);
+    return await this.listMessages(queryParts.join(" ").trim(), filter.limit ?? 25);
   }
 
-  async getMessageById(id: string, agent: Agent): Promise<EmailMessage> {
+  async getMessageById(id: string): Promise<EmailMessage> {
     return await this.getMessage(id);
   }
 
-  async createDraft(data: DraftEmailData, agent: Agent): Promise<EmailDraft> {
-    const raw = this.encodeBase64Url(this.buildMimeMessage(data));
+  async createDraft(data: DraftEmailData): Promise<EmailDraft> {
+    const raw = this.encodeBase64Url(await this.buildMimeMessage(data));
     const response = await this.googleService.fetchGoogleJson<GmailDraftResponse>(
       this.account,
       "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
@@ -82,8 +81,8 @@ export default class GmailEmailProvider implements EmailProvider {
     return this.gmailDraftToEmailDraft(response, data);
   }
 
-  async updateDraft(data: EmailDraft, agent: Agent): Promise<EmailDraft> {
-    const raw = this.encodeBase64Url(this.buildMimeMessage(data));
+  async updateDraft(data: EmailDraft): Promise<EmailDraft> {
+    const raw = this.encodeBase64Url(await this.buildMimeMessage(data));
     const response = await this.googleService.fetchGoogleJson<GmailDraftResponse>(
       this.account,
       `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${data.id}`,
@@ -103,7 +102,7 @@ export default class GmailEmailProvider implements EmailProvider {
     return this.gmailDraftToEmailDraft(response, data);
   }
 
-  async sendDraft(id: string, agent: Agent): Promise<void> {
+  async sendDraft(id: string): Promise<void> {
     await this.googleService.fetchGoogleJson<GmailSendResponse>(
       this.account,
       "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
@@ -115,7 +114,7 @@ export default class GmailEmailProvider implements EmailProvider {
     );
   }
 
-  private async listMessages(query: string, limit: number, agent: Agent): Promise<EmailMessage[]> {
+  private async listMessages(query: string, limit: number): Promise<EmailMessage[]> {
     const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
     url.searchParams.set("maxResults", limit.toString());
     if (query) url.searchParams.set("q", query);
@@ -130,7 +129,6 @@ export default class GmailEmailProvider implements EmailProvider {
     const messageIds = list.messages ?? [];
     const messages = await Promise.all(messageIds.map(message => this.getMessage(message.id)));
 
-    agent.infoMessage(`[gmail] Loaded ${messages.length} messages for account ${this.account}`);
     return messages;
   }
 
@@ -193,8 +191,8 @@ export default class GmailEmailProvider implements EmailProvider {
     };
   }
 
-  private buildMimeMessage(data: DraftEmailData): string {
-    const from = this.googleService.getUserEmail(this.account);
+  private async buildMimeMessage(data: DraftEmailData): Promise<string> {
+    const from = await this.googleService.requireUserEmail(this.account);
     const headers = [
       `From: ${from}`,
       `To: ${this.formatAddressList(data.to)}`,
@@ -270,7 +268,7 @@ export default class GmailEmailProvider implements EmailProvider {
 
   private parseAddress(value?: string): {email: string; name?: string} {
     const [address] = this.parseAddressList(value);
-    return address ?? {email: this.googleService.getUserEmail(this.account)};
+    return address ?? {email: this.googleService.getUserEmail(this.account) ?? "me"};
   }
 
   private parseAddressList(value?: string): Array<{email: string; name?: string}> {
