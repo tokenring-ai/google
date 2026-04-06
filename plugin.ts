@@ -44,6 +44,7 @@ function addAccountsFromEnv(accounts: Record<string, GoogleAccount>) {
 
 export default {
   name: packageJSON.name,
+  displayName: "Google Services",
   version: packageJSON.version,
   description: packageJSON.description,
   install(app, config) {
