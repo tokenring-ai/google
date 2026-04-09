@@ -1,8 +1,8 @@
 import {CommandFailedError} from "@tokenring-ai/agent/AgentError";
 import type {AgentCommandInputSchema, AgentCommandInputType, TokenRingAgentCommand} from "@tokenring-ai/agent/types";
+import {WebHostService} from "@tokenring-ai/web-host";
 import {setTimeout as delay} from "node:timers/promises";
 import GoogleService, {GOOGLE_OAUTH_CALLBACK_PATH} from "../../../GoogleService.ts";
-import {WebHostService} from "@tokenring-ai/web-host";
 
 const inputSchema = {
   args: {},

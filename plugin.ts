@@ -1,19 +1,19 @@
 import {AgentCommandService} from "@tokenring-ai/agent";
-import TokenRingApp, {TokenRingPlugin} from "@tokenring-ai/app";
+import {TokenRingPlugin} from "@tokenring-ai/app";
 import {CalendarService} from "@tokenring-ai/calendar";
 import {EmailService} from "@tokenring-ai/email";
+import {z} from "zod";
 import FileSystemService from "../filesystem/FileSystemService.ts";
 import VaultService from "../vault/VaultService.ts";
 import {WebHostService} from "../web-host/index.ts";
-import {z} from "zod";
+import agentCommands from "./commands.ts";
+import GmailEmailProvider from "./GmailEmailProvider.ts";
 import GoogleCalendarProvider from "./GoogleCalendarProvider.ts";
 import GoogleDriveFileSystemProvider from "./GoogleDriveFileSystemProvider.ts";
 import GoogleOAuthCallbackResource from "./GoogleOAuthCallbackResource.ts";
-import GmailEmailProvider from "./GmailEmailProvider.ts";
 import GoogleService from "./GoogleService.ts";
-import agentCommands from "./commands.ts";
 import packageJSON from "./package.json" with {type: "json"};
-import {GoogleConfigSchema, type GoogleAccount} from "./schema.ts";
+import {type GoogleAccount, GoogleConfigSchema} from "./schema.ts";
 
 const packageConfigSchema = z.object({
   google: GoogleConfigSchema.prefault({accounts: {}}),
