@@ -1,5 +1,5 @@
 import {AgentCommandService} from "@tokenring-ai/agent";
-import {TokenRingPlugin} from "@tokenring-ai/app";
+import type {TokenRingPlugin} from "@tokenring-ai/app";
 import {CalendarService} from "@tokenring-ai/calendar";
 import {EmailService} from "@tokenring-ai/email";
 import {z} from "zod";
@@ -28,16 +28,17 @@ function addAccountsFromEnv(accounts: Record<string, GoogleAccount>) {
     if (!clientSecret) continue;
     const userEmail = process.env[`GOOGLE_USER_EMAIL${n}`];
     const defaultName = `google-${n || "1"}`;
-    const name = process.env[`GOOGLE_ACCOUNT_NAME${n}`] ?? userEmail ?? defaultName;
+    const name =
+      process.env[`GOOGLE_ACCOUNT_NAME${n}`] ?? userEmail ?? defaultName;
     accounts[name] = {
       clientId: value,
       clientSecret,
       userEmail,
       refreshToken: process.env[`GOOGLE_REFRESH_TOKEN${n}`],
       accessToken: process.env[`GOOGLE_ACCESS_TOKEN${n}`],
-      email: { description: "Gmail" },
-      calendar: { description: "Google Calendar", calendarId: "primary" },
-      drive: {description: "Google Drive", rootFolderId: "root"}
+      email: {description: "Gmail"},
+      calendar: {description: "Google Calendar", calendarId: "primary"},
+      drive: {description: "Google Drive", rootFolderId: "root"},
     };
   }
 }
@@ -50,46 +51,72 @@ export default {
   install(app, config) {
     addAccountsFromEnv(config.google.accounts);
 
-    const googleService = new GoogleService(GoogleConfigSchema.parse(config.google));
+    const googleService = new GoogleService(
+      GoogleConfigSchema.parse(config.google),
+    );
     app.addServices(googleService);
 
-    app.waitForService(VaultService, vaultService => {
+    app.waitForService(VaultService, (vaultService) => {
       googleService.setVaultService(vaultService);
     });
-    app.waitForService(AgentCommandService, commandService => {
+    app.waitForService(AgentCommandService, (commandService) => {
       commandService.addAgentCommands(agentCommands);
     });
 
     for (const [name, account] of Object.entries(config.google.accounts)) {
-      if (account.email) {
-        app.services.waitForItemByType(EmailService, emailService => {
+      const {email, calendar, drive} = account;
+      if (email) {
+        app.services.waitForItemByType(EmailService, (emailService) => {
           emailService.registerEmailProvider(
             name,
-            new GmailEmailProvider({description: account.email!.description, account: name}, googleService),
+            new GmailEmailProvider(
+              {description: email.description, account: name},
+              googleService,
+            ),
           );
         });
       }
 
-      if (account.calendar) {
-        app.services.waitForItemByType(CalendarService, calendarService => {
+      if (calendar) {
+        app.services.waitForItemByType(CalendarService, (calendarService) => {
           calendarService.registerCalendarProvider(
             name,
-            new GoogleCalendarProvider({description: account.calendar!.description, account: name, calendarId: account.calendar!.calendarId}, googleService),
+            new GoogleCalendarProvider(
+              {
+                description: calendar.description,
+                account: name,
+                calendarId: calendar.calendarId,
+              },
+              googleService,
+            ),
           );
         });
       }
 
-      if (account.drive) {
-        app.services.waitForItemByType(FileSystemService, fileSystemService => {
-          fileSystemService.registerFileSystemProvider(
-            name,
-            new GoogleDriveFileSystemProvider({description: account.drive!.description, account: name, rootFolderId: account.drive!.rootFolderId}, googleService),
-          );
-        });
+      if (drive) {
+        app.services.waitForItemByType(
+          FileSystemService,
+          (fileSystemService) => {
+            fileSystemService.registerFileSystemProvider(
+              name,
+              new GoogleDriveFileSystemProvider(
+                {
+                  description: drive.description,
+                  account: name,
+                  rootFolderId: drive.rootFolderId,
+                },
+                googleService,
+              ),
+            );
+          },
+        );
       }
     }
-    app.services.waitForItemByType(WebHostService, webHostService => {
-      webHostService.registerResource("google-oauth-callback", new GoogleOAuthCallbackResource(googleService));
+    app.services.waitForItemByType(WebHostService, (webHostService) => {
+      webHostService.registerResource(
+        "google-oauth-callback",
+        new GoogleOAuthCallbackResource(googleService),
+      );
     });
   },
   config: packageConfigSchema,

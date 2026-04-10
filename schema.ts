@@ -36,9 +36,11 @@ export const GoogleStoredTokenSchema = z.object({
   grantedScopes: z.array(z.string()).optional(),
 });
 
-export const GoogleAgentOptionsSchema = z.object({
-  account: z.string().optional(),
-}).default({})
+export const GoogleAgentOptionsSchema = z
+  .object({
+    account: z.string().optional(),
+  })
+  .default({});
 
 export const GoogleConfigSchema = z.object({
   accounts: z.record(z.string(), GoogleAccountSchema).default({}),
@@ -65,9 +67,15 @@ export const GoogleDriveFileSystemProviderOptionsSchema = z.object({
 export type GoogleConfig = z.input<typeof GoogleConfigSchema>;
 export type GoogleAccount = z.input<typeof GoogleAccountSchema>;
 export type GoogleStoredToken = z.input<typeof GoogleStoredTokenSchema>;
-export type GmailEmailProviderOptions = z.input<typeof GmailEmailProviderOptionsSchema>;
-export type GoogleCalendarProviderOptions = z.input<typeof GoogleCalendarProviderOptionsSchema>;
-export type GoogleDriveFileSystemProviderOptions = z.input<typeof GoogleDriveFileSystemProviderOptionsSchema>;
+export type GmailEmailProviderOptions = z.input<
+  typeof GmailEmailProviderOptionsSchema
+>;
+export type GoogleCalendarProviderOptions = z.input<
+  typeof GoogleCalendarProviderOptionsSchema
+>;
+export type GoogleDriveFileSystemProviderOptions = z.input<
+  typeof GoogleDriveFileSystemProviderOptionsSchema
+>;
 export type GoogleAccountEmail = z.input<typeof GoogleAccountEmailSchema>;
 export type GoogleAccountCalendar = z.input<typeof GoogleAccountCalendarSchema>;
 export type GoogleAccountDrive = z.input<typeof GoogleAccountDriveSchema>;

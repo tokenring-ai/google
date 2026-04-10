@@ -1,5 +1,6 @@
 import type {BunRouter, WebResource} from "../web-host/types.ts";
-import GoogleService, {GOOGLE_OAUTH_CALLBACK_PATH} from "./GoogleService.ts";
+import type GoogleService from "./GoogleService.ts";
+import {GOOGLE_OAUTH_CALLBACK_PATH} from "./GoogleService.ts";
 
 function renderHtml(title: string, message: string): string {
   return `<!doctype html>
@@ -44,9 +45,10 @@ function renderHtml(title: string, message: string): string {
 }
 
 export default class GoogleOAuthCallbackResource implements WebResource {
-  constructor(private readonly googleService: GoogleService) {}
+  constructor(private readonly googleService: GoogleService) {
+  }
 
-  async register(router: BunRouter): Promise<void> {
+  register(router: BunRouter): Promise<void> {
     router.get(GOOGLE_OAUTH_CALLBACK_PATH, (request, response) => {
       try {
         this.googleService.completePendingAuthorization(request.url);
@@ -66,5 +68,6 @@ export default class GoogleOAuthCallbackResource implements WebResource {
         );
       }
     });
+    return Promise.resolve();
   }
 }

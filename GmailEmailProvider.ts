@@ -8,12 +8,12 @@ import type {
   EmailProvider,
   EmailSearchOptions,
 } from "@tokenring-ai/email";
-import {z} from "zod";
-import GoogleService from "./GoogleService.ts";
-import {GmailEmailProviderOptionsSchema} from "./schema.ts";
+import type {z} from "zod";
+import type GoogleService from "./GoogleService.ts";
+import type {GmailEmailProviderOptionsSchema} from "./schema.ts";
 
 type GmailMessageListResponse = {
-  messages?: Array<{id: string; threadId: string}>;
+  messages?: Array<{ id: string; threadId: string }>;
   nextPageToken?: string;
 };
 
@@ -25,12 +25,12 @@ type GmailLabelListResponse = {
   }>;
 };
 
-type GmailHeader = {name?: string; value?: string};
+type GmailHeader = { name?: string; value?: string };
 type GmailPart = {
   mimeType?: string;
   filename?: string;
   headers?: GmailHeader[];
-  body?: {data?: string; size?: number};
+  body?: { data?: string; size?: number };
   parts?: GmailPart[];
 };
 type GmailMessageResponse = {
@@ -72,29 +72,41 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   async listBoxes(): Promise<EmailBox[]> {
-    const response = await this.googleService.fetchGoogleJson<GmailLabelListResponse>(
-      this.account,
-      "https://gmail.googleapis.com/gmail/v1/users/me/labels",
-      {method: "GET"},
-      "list Gmail labels",
-    );
+    const response =
+      await this.googleService.fetchGoogleJson<GmailLabelListResponse>(
+        this.account,
+        "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        {method: "GET"},
+        "list Gmail labels",
+      );
 
-    const availableLabelNames = new Set((response.labels ?? []).map(label => label.name));
+    const availableLabelNames = new Set(
+      (response.labels ?? []).map((label) => label.name),
+    );
     return gmailSystemBoxes
-      .filter(box => availableLabelNames.has(box.labelName))
+      .filter((box) => availableLabelNames.has(box.labelName))
       .map(({id, name}) => ({id, name}));
   }
 
-  async getMessages(filter: EmailMessageQueryOptions): Promise<EmailMessagePage> {
+  async getMessages(
+    filter: EmailMessageQueryOptions,
+  ): Promise<EmailMessagePage> {
     const queryParts = [this.getBoxQuery(filter.box ?? "inbox")];
     if (filter.unreadOnly) queryParts.push("is:unread");
-    return await this.listMessages(queryParts.filter(Boolean).join(" "), filter.limit ?? 25, filter.pageToken);
+    return await this.listMessages(
+      queryParts.filter(Boolean).join(" "),
+      filter.limit ?? 25,
+      filter.pageToken,
+    );
   }
 
   async searchMessages(filter: EmailSearchOptions): Promise<EmailMessage[]> {
     const queryParts = [filter.query, this.getBoxQuery(filter.box ?? "inbox")];
     if (filter.unreadOnly) queryParts.push("is:unread");
-    const page = await this.listMessages(queryParts.filter(Boolean).join(" ").trim(), filter.limit ?? 25);
+    const page = await this.listMessages(
+      queryParts.filter(Boolean).join(" ").trim(),
+      filter.limit ?? 25,
+    );
     return page.messages;
   }
 
@@ -104,41 +116,43 @@ export default class GmailEmailProvider implements EmailProvider {
 
   async createDraft(data: DraftEmailData): Promise<EmailDraft> {
     const raw = this.encodeBase64Url(await this.buildMimeMessage(data));
-    const response = await this.googleService.fetchGoogleJson<GmailDraftResponse>(
-      this.account,
-      "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          message: {
-            raw,
-            threadId: data.threadId,
-          },
-        }),
-      },
-      "create Gmail draft",
-    );
+    const response =
+      await this.googleService.fetchGoogleJson<GmailDraftResponse>(
+        this.account,
+        "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            message: {
+              raw,
+              threadId: data.threadId,
+            },
+          }),
+        },
+        "create Gmail draft",
+      );
 
     return this.gmailDraftToEmailDraft(response, data);
   }
 
   async updateDraft(data: EmailDraft): Promise<EmailDraft> {
     const raw = this.encodeBase64Url(await this.buildMimeMessage(data));
-    const response = await this.googleService.fetchGoogleJson<GmailDraftResponse>(
-      this.account,
-      `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${data.id}`,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          id: data.id,
-          message: {
-            raw,
-            threadId: data.threadId,
-          },
-        }),
-      },
-      "update Gmail draft",
-    );
+    const response =
+      await this.googleService.fetchGoogleJson<GmailDraftResponse>(
+        this.account,
+        `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${data.id}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            id: data.id,
+            message: {
+              raw,
+              threadId: data.threadId,
+            },
+          }),
+        },
+        "update Gmail draft",
+      );
 
     return this.gmailDraftToEmailDraft(response, data);
   }
@@ -155,21 +169,30 @@ export default class GmailEmailProvider implements EmailProvider {
     );
   }
 
-  private async listMessages(query: string, limit: number, pageToken?: string): Promise<EmailMessagePage> {
-    const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  private async listMessages(
+    query: string,
+    limit: number,
+    pageToken?: string,
+  ): Promise<EmailMessagePage> {
+    const url = new URL(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+    );
     url.searchParams.set("maxResults", limit.toString());
     if (query) url.searchParams.set("q", query);
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    const list = await this.googleService.fetchGoogleJson<GmailMessageListResponse>(
-      this.account,
-      url.toString(),
-      {method: "GET"},
-      "list Gmail messages",
-    );
+    const list =
+      await this.googleService.fetchGoogleJson<GmailMessageListResponse>(
+        this.account,
+        url.toString(),
+        {method: "GET"},
+        "list Gmail messages",
+      );
 
     const messageIds = list.messages ?? [];
-    const messages = await Promise.all(messageIds.map(message => this.getMessage(message.id)));
+    const messages = await Promise.all(
+      messageIds.map((message) => this.getMessage(message.id)),
+    );
 
     return {
       messages,
@@ -178,17 +201,20 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   private async getMessage(id: string): Promise<EmailMessage> {
-    const response = await this.googleService.fetchGoogleJson<GmailMessageResponse>(
-      this.account,
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
-      {method: "GET"},
-      `fetch Gmail message ${id}`,
-    );
+    const response =
+      await this.googleService.fetchGoogleJson<GmailMessageResponse>(
+        this.account,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+        {method: "GET"},
+        `fetch Gmail message ${id}`,
+      );
 
     return this.gmailMessageToEmailMessage(response);
   }
 
-  private gmailMessageToEmailMessage(message: GmailMessageResponse): EmailMessage {
+  private gmailMessageToEmailMessage(
+    message: GmailMessageResponse,
+  ): EmailMessage {
     const headers = this.collectHeaders(message.payload);
     const subject = this.getHeader(headers, "Subject") ?? "(no subject)";
     const from = this.parseAddress(this.getHeader(headers, "From"));
@@ -197,7 +223,9 @@ export default class GmailEmailProvider implements EmailProvider {
     const bcc = this.parseAddressList(this.getHeader(headers, "Bcc"));
     const textBody = this.extractBody(message.payload, "text/plain");
     const htmlBody = this.extractBody(message.payload, "text/html");
-    const receivedAt = message.internalDate ? new Date(Number(message.internalDate)) : new Date();
+    const receivedAt = message.internalDate
+      ? new Date(Number(message.internalDate))
+      : new Date();
 
     return {
       id: message.id,
@@ -213,14 +241,20 @@ export default class GmailEmailProvider implements EmailProvider {
       labels: message.labelIds,
       isRead: !(message.labelIds ?? []).includes("UNREAD"),
       receivedAt,
-      sentAt: this.parseDateHeader(this.getHeader(headers, "Date")) ?? receivedAt,
+      sentAt:
+        this.parseDateHeader(this.getHeader(headers, "Date")) ?? receivedAt,
     };
   }
 
-  private gmailDraftToEmailDraft(response: GmailDraftResponse, fallback: DraftEmailData): EmailDraft {
+  private gmailDraftToEmailDraft(
+    response: GmailDraftResponse,
+    fallback: DraftEmailData,
+  ): EmailDraft {
     const message = response.message;
     const now = new Date();
-    const parsedMessage = message ? this.gmailMessageToEmailMessage(message) : undefined;
+    const parsedMessage = message
+      ? this.gmailMessageToEmailMessage(message)
+      : undefined;
 
     return {
       id: response.id,
@@ -238,20 +272,20 @@ export default class GmailEmailProvider implements EmailProvider {
 
   private async buildMimeMessage(data: DraftEmailData): Promise<string> {
     const from = await this.googleService.requireUserEmail(this.account);
-    const headers = [
-      `From: ${from}`,
-      `To: ${this.formatAddressList(data.to)}`,
-    ];
+    const headers = [`From: ${from}`, `To: ${this.formatAddressList(data.to)}`];
 
     if (data.cc?.length) headers.push(`Cc: ${this.formatAddressList(data.cc)}`);
-    if (data.bcc?.length) headers.push(`Bcc: ${this.formatAddressList(data.bcc)}`);
+    if (data.bcc?.length)
+      headers.push(`Bcc: ${this.formatAddressList(data.bcc)}`);
     if (data.threadId) headers.push(`References: ${data.threadId}`);
     headers.push(`Subject: ${data.subject}`);
     headers.push("MIME-Version: 1.0");
 
     if (data.textBody && data.htmlBody) {
       const boundary = `tokenring-${Date.now()}`;
-      headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+      headers.push(
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      );
       return [
         ...headers,
         "",
@@ -268,12 +302,10 @@ export default class GmailEmailProvider implements EmailProvider {
       ].join("\r\n");
     }
 
-    headers.push(`Content-Type: ${data.htmlBody ? "text/html" : "text/plain"}; charset=UTF-8`);
-    return [
-      ...headers,
-      "",
-      data.htmlBody ?? data.textBody ?? "",
-    ].join("\r\n");
+    headers.push(
+      `Content-Type: ${data.htmlBody ? "text/html" : "text/plain"}; charset=UTF-8`,
+    );
+    return [...headers, "", data.htmlBody ?? data.textBody ?? ""].join("\r\n");
   }
 
   private encodeBase64Url(value: string): string {
@@ -286,13 +318,18 @@ export default class GmailEmailProvider implements EmailProvider {
 
   private decodeBase64Url(value: string): string {
     const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-    const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
+    const padding =
+      normalized.length % 4 === 0
+        ? ""
+        : "=".repeat(4 - (normalized.length % 4));
     return Buffer.from(`${normalized}${padding}`, "base64").toString("utf8");
   }
 
   private getBoxQuery(box: string): string {
     const normalizedBox = box.trim().toLowerCase();
-    const systemBox = gmailSystemBoxes.find(candidate => candidate.id === normalizedBox);
+    const systemBox = gmailSystemBoxes.find(
+      (candidate) => candidate.id === normalizedBox,
+    );
     if (systemBox) return systemBox.query;
 
     return `label:${this.escapeGmailQueryValue(box)}`;
@@ -304,14 +341,22 @@ export default class GmailEmailProvider implements EmailProvider {
 
   private collectHeaders(part?: GmailPart): GmailHeader[] {
     if (!part) return [];
-    return [...(part.headers ?? []), ...(part.parts ?? []).flatMap(child => this.collectHeaders(child))];
+    return [
+      ...(part.headers ?? []),
+      ...(part.parts ?? []).flatMap((child) => this.collectHeaders(child)),
+    ];
   }
 
   private getHeader(headers: GmailHeader[], name: string): string | undefined {
-    return headers.find(header => header.name?.toLowerCase() === name.toLowerCase())?.value;
+    return headers.find(
+      (header) => header.name?.toLowerCase() === name.toLowerCase(),
+    )?.value;
   }
 
-  private extractBody(part: GmailPart | undefined, mimeType: string): string | undefined {
+  private extractBody(
+    part: GmailPart | undefined,
+    mimeType: string,
+  ): string | undefined {
     if (!part) return undefined;
     if (part.mimeType === mimeType && part.body?.data) {
       return this.decodeBase64Url(part.body.data);
@@ -323,18 +368,24 @@ export default class GmailEmailProvider implements EmailProvider {
     return undefined;
   }
 
-  private parseAddress(value?: string): {email: string; name?: string} {
+  private parseAddress(value?: string): { email: string; name?: string } {
     const [address] = this.parseAddressList(value);
-    return address ?? {email: this.googleService.getUserEmail(this.account) ?? "me"};
+    return (
+      address ?? {
+        email: this.googleService.getUserEmail(this.account) ?? "me",
+      }
+    );
   }
 
-  private parseAddressList(value?: string): Array<{email: string; name?: string}> {
+  private parseAddressList(
+    value?: string,
+  ): Array<{ email: string; name?: string }> {
     if (!value) return [];
     return value
       .split(",")
-      .map(item => item.trim())
+      .map((item) => item.trim())
       .filter(Boolean)
-      .map(item => {
+      .map((item) => {
         const match = item.match(/^(.*)<([^>]+)>$/);
         if (!match) return {email: item.replace(/^"|"$/g, "")};
         const name = match[1].trim().replace(/^"|"$/g, "");
@@ -342,8 +393,14 @@ export default class GmailEmailProvider implements EmailProvider {
       });
   }
 
-  private formatAddressList(addresses: Array<{email: string; name?: string}>): string {
-    return addresses.map(address => address.name ? `${address.name} <${address.email}>` : address.email).join(", ");
+  private formatAddressList(
+    addresses: Array<{ email: string; name?: string }>,
+  ): string {
+    return addresses
+      .map((address) =>
+        address.name ? `${address.name} <${address.email}>` : address.email,
+      )
+      .join(", ");
   }
 
   private parseDateHeader(value?: string): Date | undefined {
