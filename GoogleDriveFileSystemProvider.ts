@@ -1,4 +1,4 @@
-import type {DirectoryTreeOptions, FileSystemProvider, GrepOptions, GrepResult, StatLike, WatchOptions,} from "@tokenring-ai/filesystem/FileSystemProvider";
+import type {DirectoryTreeOptions, FileSystemProvider, GrepOptions, GrepResult, StatLike, WatchOptions} from "@tokenring-ai/filesystem/FileSystemProvider";
 import type {z} from "zod";
 import type GoogleService from "./GoogleService.ts";
 import type {GoogleDriveFileSystemProviderOptionsSchema} from "./schema.ts";

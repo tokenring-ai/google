@@ -107,9 +107,9 @@ contains 'quinn\'s paper\\essay'`.
 | Files that are starred | `starred = true` |
 | Files within a collection (for example, the folder ID in the `parents` collection) | `'1234567' in parents` |
 | Files in an [application data folder](https://developers.google.com/workspace/drive/api/guides/appdata) in a collection | `'appDataFolder' in parents` |
-| Files for which user "test@example.org" is the owner | `'test@example.org' in owners` |
-| Files for which user "test@example.org" has write permission | `'test@example.org' in writers` |
-| Files for which members of the group "group@example.org" have write permission | `'group@example.org' in writers` |
+| Files for which user "<test@example.org>" is the owner | `'test@example.org' in owners` |
+| Files for which user "<test@example.org>" has write permission | `'test@example.org' in writers` |
+| Files for which members of the group "<group@example.org>" have write permission | `'group@example.org' in writers` |
 | Files shared with the authorized user with "hello" in the name | `sharedWithMe and name contains 'hello'` |
 | Files with a custom file property visible to all apps | `properties has { key='mass' and value='1.3kg' }` |
 | Files with a custom file property private to the requesting app | `appProperties has { key='additionalID' and value='8e8aceg2af2ge72e78' }` |

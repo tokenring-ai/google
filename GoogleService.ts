@@ -5,7 +5,7 @@ import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
 import {randomUUID} from "node:crypto";
 import type {z} from "zod";
 import type VaultService from "../vault/VaultService.ts";
-import {type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema,} from "./schema.ts";
+import {type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema} from "./schema.ts";
 
 type GoogleTokenResponse = {
   access_token: string;
