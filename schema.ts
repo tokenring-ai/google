@@ -1,6 +1,6 @@
 import {z} from "zod";
 
-export const GoogleAccountEmailSchema = z.object({
+export const GoogleAccountGmailSchema = z.object({
   description: z.string().default("Gmail"),
 });
 
@@ -15,25 +15,32 @@ export const GoogleAccountDriveSchema = z.object({
 });
 
 export const GoogleAccountSchema = z.object({
-  clientId: z.string(),
-  clientSecret: z.string(),
-  userEmail: z.string().email().optional(),
-  refreshToken: z.string().optional(),
-  accessToken: z.string().optional(),
-  expiryDate: z.number().optional(),
-  grantedScopes: z.array(z.string()).optional(),
-  scopes: z.array(z.string()).optional(),
-  email: GoogleAccountEmailSchema.optional(),
-  calendar: GoogleAccountCalendarSchema.optional(),
-  drive: GoogleAccountDriveSchema.optional(),
+  email: z.string().email(),
+  gmail: GoogleAccountGmailSchema.prefault({}),
+  calendar: GoogleAccountCalendarSchema.prefault({}),
+  drive: GoogleAccountDriveSchema.prefault({}),
 });
 
 export const GoogleStoredTokenSchema = z.object({
-  userEmail: z.string().email().optional(),
   refreshToken: z.string().optional(),
   accessToken: z.string().optional(),
   expiryDate: z.number().optional(),
   grantedScopes: z.array(z.string()).optional(),
+  profile: z
+    .object({
+      email: z.string().nullable().optional(),
+      family_name: z.string().nullable().optional(),
+      gender: z.string().nullable().optional(),
+      given_name: z.string().nullable().optional(),
+      hd: z.string().nullable().optional(),
+      id: z.string().nullable().optional(),
+      link: z.string().nullable().optional(),
+      locale: z.string().nullable().optional(),
+      name: z.string().nullable().optional(),
+      picture: z.string().nullable().optional(),
+      verified_email: z.boolean().nullable().optional(),
+    })
+    .optional(),
 });
 
 export const GoogleAgentOptionsSchema = z
@@ -43,6 +50,8 @@ export const GoogleAgentOptionsSchema = z
   .default({});
 
 export const GoogleConfigSchema = z.object({
+  clientId: z.string().optional(),
+  clientSecret: z.string().optional(),
   accounts: z.record(z.string(), GoogleAccountSchema).default({}),
   agentDefaults: GoogleAgentOptionsSchema.default({}),
 });
@@ -76,6 +85,6 @@ export type GoogleCalendarProviderOptions = z.input<
 export type GoogleDriveFileSystemProviderOptions = z.input<
   typeof GoogleDriveFileSystemProviderOptionsSchema
 >;
-export type GoogleAccountEmail = z.input<typeof GoogleAccountEmailSchema>;
+export type GoogleAccountEmail = z.input<typeof GoogleAccountGmailSchema>;
 export type GoogleAccountCalendar = z.input<typeof GoogleAccountCalendarSchema>;
 export type GoogleAccountDrive = z.input<typeof GoogleAccountDriveSchema>;

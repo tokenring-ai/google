@@ -58,7 +58,7 @@ export default class GoogleOAuthCallbackResource implements WebResource {
             "Authentication completed. You can close this tab and return to TokenRing.",
           ),
         );
-      } catch (error) {
+      } catch (error: unknown) {
         return response.html(
           renderHtml(
             "Google authentication failed",

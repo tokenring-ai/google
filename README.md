@@ -229,11 +229,11 @@ import GooglePlugin from "@tokenring-ai/google/plugin";
 const app = new TokenRingApp();
 app.usePlugin(GooglePlugin, {
   google: {
+    clientId: process.env.GOOGLE_CLIENT_ID!,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     defaultAccount: "primary",
     accounts: {
       primary: {
-        clientId: process.env.GOOGLE_CLIENT_ID!,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
         redirectUri: "http://localhost:3000/oauth/google/callback",
         userEmail: "me@example.com",
         refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
@@ -322,11 +322,11 @@ The package is configured under the `google` key, and optionally under the abstr
 ```ts
 {
   google: {
+    clientId: process.env.GOOGLE_CLIENT_ID!,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     defaultAccount: "primary",
     accounts: {
       primary: {
-        clientId: process.env.GOOGLE_CLIENT_ID!,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
         redirectUri: "http://localhost:3000/oauth/google/callback",
         userEmail: "me@example.com",
         refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
@@ -347,11 +347,11 @@ The package is configured under the `google` key, and optionally under the abstr
 ### Schemas
 
 - `GoogleConfigSchema`
+  - `clientId: string`
+  - `clientSecret: string`
   - `accounts: Record<string, GoogleAccount>`
   - `defaultAccount?: string`
 - `GoogleAccountSchema`
-  - `clientId: string`
-  - `clientSecret: string`
   - `redirectUri: string`
   - `userEmail: string`
   - `refreshToken?: string`

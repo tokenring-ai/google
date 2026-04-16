@@ -17,23 +17,22 @@ export default {
   name: "google account get",
   description: "Show a Google account",
   inputSchema,
-  execute: async ({
+  execute: ({
                     agent,
                     positionals,
-                  }: AgentCommandInputType<typeof inputSchema>): Promise<string> => {
+                  }: AgentCommandInputType<typeof inputSchema>) => {
     const googleService = agent.requireServiceByType(GoogleService);
     const accountName = positionals.name;
     if (!accountName)
       throw new CommandFailedError("Usage: /google account get <accountName>");
 
-    const account = googleService.requireAccount(accountName);
-    const authenticated =
-      await googleService.isAccountAuthenticated(accountName);
+    const {isAuthenticated, account, profile} = googleService.getAccountStatus(accountName);
+
 
     return [
-      `Account: ${accountName}`,
-      `User email: ${account.userEmail ?? "(available after authentication)"}`,
-      `Authenticated: ${authenticated ? "yes" : "no"}`,
+      `Account: ${accountName} (${account.email})`,
+      `User Profile Email: ${profile?.email ?? "(available after authentication)"}`,
+      `Authenticated: ${isAuthenticated ? "yes" : "no"}`,
     ].join("\n");
   },
   help: `Display a configured Google account.

@@ -1,23 +1,11 @@
-import type Agent from "@tokenring-ai/agent/Agent";
+import type TokenRingApp from "@tokenring-ai/app";
 import type {TokenRingService} from "@tokenring-ai/app/types";
-import {doFetchWithRetry} from "@tokenring-ai/utility/http/doFetchWithRetry";
 import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
+import VaultService from "@tokenring-ai/vault/VaultService";
+import {type Auth, type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2} from "googleapis";
 import {randomUUID} from "node:crypto";
 import type {z} from "zod";
-import type VaultService from "../vault/VaultService.ts";
 import {type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema} from "./schema.ts";
-
-type GoogleTokenResponse = {
-  access_token: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
-  token_type?: string;
-};
-
-type GoogleUserInfoResponse = {
-  email?: string;
-};
 
 type GoogleApiErrorResponse = {
   error?: {
@@ -36,6 +24,27 @@ type GoogleApiErrorResponse = {
       metadata?: Record<string, string>;
     }>;
   };
+};
+
+type GoogleOAuthCredentials = {
+  access_token?: string;
+  expiry_date?: number;
+  refresh_token?: string;
+  scope?: string;
+};
+
+type GoogleOAuthTokenUpdate = {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  expiry_date?: number | null;
+  scope?: string | null;
+};
+
+type GoogleRequestOptions = {
+  context: string;
+  method?: string;
+  requiredScopes?: string[];
+  url?: string;
 };
 
 type RuntimeGoogleAccount = z.output<typeof GoogleAccountSchema>;
@@ -64,55 +73,58 @@ export default class GoogleService implements TokenRingService {
   description = "Google OAuth account and API access service";
 
   private readonly accounts = new KeyedRegistry<RuntimeGoogleAccount>();
+  private readonly authData = new Map<string, StoredGoogleToken>();
   private readonly pendingAuthorizations = new Map<
     string,
     PendingAuthorization
   >();
 
-  requireAccount = this.accounts.requireItemByName;
-  private vaultService?: VaultService;
+  getAvailableAccounts = this.accounts.keysArray;
+  requireAccount = this.accounts.require;
+
+  private vaultService: VaultService | null = null;
 
   constructor(
+    readonly app: TokenRingApp,
     readonly options: z.output<typeof GoogleConfigSchema>,
-    vaultService?: VaultService,
   ) {
-    this.accounts.registerAll(options.accounts);
-    this.vaultService = vaultService;
+    this.accounts.setAll(options.accounts);
+
+    app.waitForService(VaultService, async (vaultService) => {
+      this.vaultService = vaultService;
+
+      for (const accountName of this.accounts.keysArray()) {
+        try {
+          const stored = this.vaultService
+            .requireJsonItem(GOOGLE_VAULT_CATEGORY, accountName, GoogleStoredTokenSchema);
+          this.authData.set(accountName, stored);
+
+          await this.syncAccountProfile(accountName);
+
+        } catch (err) {
+          this.app.serviceError(this, `Couldn't load auth token for google account ${accountName} from the vault. Re-authenticate with /google account auth ${accountName} to re-authorize.`, err);
+        }
+      }
+    });
   }
 
-  setVaultService(vaultService: VaultService): void {
-    this.vaultService = vaultService;
-  }
-
-  getAvailableAccounts(): string[] {
-    return this.accounts.getAllItemNames();
-  }
-
-  async requireVault(agent: Agent): Promise<VaultService> {
-    if (!this.vaultService) {
-      throw new Error(
-        "Google auth requires VaultService so tokens can be stored securely.",
-      );
-    }
-    await this.vaultService.unlock(agent);
-    return this.vaultService;
-  }
-
-  getUserEmail(accountName: string): string | undefined {
-    return this.requireAccount(accountName).userEmail;
-  }
-
-  async requireUserEmail(accountName: string): Promise<string> {
-    await this.loadStoredTokens(accountName);
-    const userEmail = this.requireAccount(accountName).userEmail;
-    if (userEmail) return userEmail;
-    return await this.syncAccountProfile(accountName);
-  }
-
-  async isAccountAuthenticated(accountName: string): Promise<boolean> {
-    await this.loadStoredTokens(accountName);
+  getAccountStatus(accountName: string) {
     const account = this.requireAccount(accountName);
-    return !!account.refreshToken || !!account.accessToken;
+    const auth = this.authData.get(accountName);
+
+    return {
+      isAuthenticated: Boolean(auth?.refreshToken && auth?.accessToken),
+      profile: auth?.profile,
+      account
+    }
+  }
+
+  requireAuthorizedAccount(accountName: string) {
+    const authStatus = this.getAccountStatus(accountName);
+    if (!authStatus.isAuthenticated) {
+      throw new Error(`Google account ${accountName} is not authenticated. Please authenticate with /google account auth ${accountName}`);
+    }
+    return authStatus;
   }
 
   createAuthorizationUrl(
@@ -127,20 +139,14 @@ export default class GoogleService implements TokenRingService {
     } = {},
   ): string {
     const account = this.requireAccount(accountName);
-    const params = new URLSearchParams({
-      client_id: account.clientId,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      scope: (options.scopes ?? this.getDefaultScopes(account)).join(" "),
+    const oauthClient = this.createOAuthClient(accountName, redirectUri);
+    return oauthClient.generateAuthUrl({
       access_type: options.accessType ?? "offline",
       prompt: options.prompt ?? "consent",
+      scope: options.scopes ?? this.getDefaultScopes(account),
+      state: options.state,
+      login_hint: options.loginHint ?? account.email,
     });
-
-    if (options.state) params.set("state", options.state);
-    const loginHint = options.loginHint ?? account.userEmail;
-    if (loginHint) params.set("login_hint", loginHint);
-
-    return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   }
 
   beginAuthorization(
@@ -222,216 +228,136 @@ export default class GoogleService implements TokenRingService {
     name: string,
     code: string,
     redirectUri: string,
-  ): Promise<RuntimeGoogleAccount> {
-    const account = this.requireAccount(name);
-    const body = new URLSearchParams({
-      code,
-      client_id: account.clientId,
-      client_secret: account.clientSecret,
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code",
-    });
+  ) {
+    const oauthClient = this.createOAuthClient(name, redirectUri);
 
-    const tokens = await this.fetchTokenResponse(
-      body,
-      `exchange Google auth code for ${name}`,
-    );
-    this.storeTokenResponse(name, tokens);
+    try {
+      const {tokens} = await oauthClient.getToken(code);
+      await this.storeOAuthCredentials(name, tokens);
+      oauthClient.setCredentials(this.getOAuthCredentials(name));
+    } catch (error: unknown) {
+      throw this.createRequestFailure(
+        `exchange Google auth code for ${name}`,
+        error,
+      );
+    }
+
     await this.syncAccountProfile(name);
-    await this.persistAccountTokens(name, true);
-    return this.requireAccount(name);
+    await this.tryStoreAuthDataInVault(name);
+    return this.getAccountStatus(name)
   }
 
-  async refreshAccessToken(accountName: string): Promise<string> {
-    await this.loadStoredTokens(accountName);
-    const account = this.requireAccount(accountName);
-    if (!account.refreshToken) {
-      throw new Error(
-        `Google account "${accountName}" does not have a refresh token configured`,
-      );
-    }
-
-    const body = new URLSearchParams({
-      client_id: account.clientId,
-      client_secret: account.clientSecret,
-      refresh_token: account.refreshToken,
-      grant_type: "refresh_token",
-    });
-
-    const tokens = await this.fetchTokenResponse(
-      body,
-      `refresh Google access token for ${accountName}`,
-    );
-    this.storeTokenResponse(accountName, tokens);
-    await this.persistAccountTokens(accountName, false);
-    const {accessToken} = this.requireAccount(accountName);
-    if (!accessToken) throw new Error(`Failed to obtain access token for Google account "${accountName}"`);
-    return accessToken;
-  }
-
-  async getAccessToken(accountName: string): Promise<string> {
-    await this.loadStoredTokens(accountName);
-    const account = this.requireAccount(accountName);
-    const now = Date.now();
-    if (account.accessToken && (!account.expiryDate || account.expiryDate > now + 30_000)) {
-      return account.accessToken;
-    }
-    return await this.refreshAccessToken(accountName);
-  }
-
-  async fetchGoogleJson<T>(
+  async withGmail<T>(
     accountName: string,
-    url: string,
-    init: RequestInit,
-    context: string,
+    request: GoogleRequestOptions,
+    operation: (gmail: gmail_v1.Gmail) => Promise<T>,
   ): Promise<T> {
-    const res = await this.fetchGoogleRaw(accountName, url, init, context);
-    const text = await res.text().catch(() => "");
-    let json: unknown = {};
+    return await this.runGoogleRequest(accountName, request, async (auth) =>
+      await operation(google.gmail({version: "v1", auth})),
+    );
+  }
+
+  async withCalendar<T>(
+    accountName: string,
+    request: GoogleRequestOptions,
+    operation: (calendar: calendar_v3.Calendar) => Promise<T>,
+  ): Promise<T> {
+    return await this.runGoogleRequest(accountName, request, async (auth) =>
+      await operation(google.calendar({version: "v3", auth})),
+    );
+  }
+
+  async withDrive<T>(
+    accountName: string,
+    request: GoogleRequestOptions,
+    operation: (drive: drive_v3.Drive) => Promise<T>,
+  ): Promise<T> {
+    return await this.runGoogleRequest(accountName, request, async (auth) =>
+      await operation(google.drive({version: "v3", auth})),
+    );
+  }
+
+  private async withOAuth2Api<T>(
+    accountName: string,
+    request: GoogleRequestOptions,
+    operation: (oauth2: oauth2_v2.Oauth2) => Promise<T>,
+  ): Promise<T> {
+    return await this.runGoogleRequest(accountName, request, async (auth) =>
+      await operation(google.oauth2({version: "v2", auth})),
+    );
+  }
+
+  private async runGoogleRequest<T>(
+    accountName: string,
+    request: GoogleRequestOptions,
+    operation: (auth: Auth.OAuth2Client) => Promise<T>,
+  ): Promise<T> {
+    const auth = this.createOAuthClient(accountName);
+
     try {
-      json = text ? JSON.parse(text) : {};
-    } catch {
-      json = text;
+      return await operation(auth);
+    } catch (error: unknown) {
+      throw this.normalizeGoogleRequestError(accountName, request, error);
     }
-
-    return json as T;
   }
 
-  async fetchGoogleRaw(
+  private createOAuthClient(
     accountName: string,
-    url: string,
-    init: RequestInit,
-    context: string,
-  ): Promise<Response> {
-    const accessToken = await this.getAccessToken(accountName);
-    const res = await doFetchWithRetry(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...(init.headers ?? {}),
-      },
+    redirectUri?: string,
+  ): Auth.OAuth2Client {
+    const oauthClient = new google.auth.OAuth2(
+      this.options.clientId,
+      this.options.clientSecret,
+      redirectUri,
+    );
+    oauthClient.setCredentials(this.getOAuthCredentials(accountName));
+    oauthClient.on("tokens", (tokens) => {
+      void this.storeOAuthCredentials(accountName, tokens);
     });
-
-    if (!res.ok) {
-      if (res.status === 401) {
-        await this.refreshAccessToken(accountName);
-        return this.fetchGoogleRawWithFreshToken(
-          accountName,
-          url,
-          init,
-          context,
-        );
-      }
-      const text = await res.text().catch(() => "");
-      let json: unknown = {};
-      try {
-        json = text ? JSON.parse(text) : {};
-      } catch {
-        json = text;
-      }
-      throw this.createGoogleApiError(
-        accountName,
-        url,
-        init,
-        context,
-        res.status,
-        json,
-      );
-    }
-    return res;
+    return oauthClient;
   }
 
-  private async fetchGoogleRawWithFreshToken(
+  private getOAuthCredentials(accountName: string): GoogleOAuthCredentials {
+    const auth = this.authData.get(accountName);
+    return {
+      access_token: auth?.accessToken,
+      expiry_date: auth?.expiryDate,
+      refresh_token: auth?.refreshToken,
+      scope: auth?.grantedScopes?.join(" "),
+    };
+  }
+
+  private async storeOAuthCredentials(
     accountName: string,
-    url: string,
-    init: RequestInit,
-    context: string,
-  ): Promise<Response> {
-    const accessToken = await this.getAccessToken(accountName);
-    const res = await doFetchWithRetry(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...(init.headers ?? {}),
-      },
-    });
+    tokens: GoogleOAuthTokenUpdate,
+  ) {
+    const newAuth = {...this.authData.get(accountName)};
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      let json: unknown = {};
-      try {
-        json = text ? JSON.parse(text) : {};
-      } catch {
-        json = text;
-      }
-      throw this.createGoogleApiError(
-        accountName,
-        url,
-        init,
-        context,
-        res.status,
-        json,
-      );
+    if (tokens.access_token) newAuth.accessToken = tokens.access_token;
+    if (typeof tokens.expiry_date === "number") {
+      newAuth.expiryDate = tokens.expiry_date;
     }
-
-    return res;
-  }
-
-  private async fetchTokenResponse(
-    body: URLSearchParams,
-    context: string,
-  ): Promise<GoogleTokenResponse> {
-    const res = await doFetchWithRetry("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body,
-    });
-
-    const text = await res.text().catch(() => "");
-    let json: unknown = {};
-    try {
-      json = text ? JSON.parse(text) : {};
-    } catch {
-      json = text;
-    }
-
-    if (!res.ok) {
-      const error = new Error(`${context} failed (${res.status})`);
-      (error as Error & { details?: unknown }).details = json;
-      throw error;
-    }
-
-    return json as GoogleTokenResponse;
-  }
-
-  private storeTokenResponse(
-    accountName: string,
-    tokens: GoogleTokenResponse,
-  ): void {
-    const account = this.requireAccount(accountName);
-    account.accessToken = tokens.access_token;
-    if (typeof tokens.expires_in === "number") {
-      account.expiryDate = Date.now() + tokens.expires_in * 1000;
-    }
-    if (tokens.refresh_token) {
-      account.refreshToken = tokens.refresh_token;
-    }
+    if (tokens.refresh_token) newAuth.refreshToken = tokens.refresh_token;
     if (tokens.scope) {
-      account.grantedScopes = tokens.scope.split(/\s+/).filter(Boolean);
+      newAuth.grantedScopes = tokens.scope.split(/\s+/).filter(Boolean);
     }
+
+    this.authData.set(accountName, newAuth);
+    await this.tryStoreAuthDataInVault(accountName);
+  }
+
+  private async tryStoreAuthDataInVault(accountName: string) {
+    if (!this.vaultService) return;
+    const authData = this.authData.get(accountName);
+    await this.vaultService.setJsonItem(
+      GOOGLE_VAULT_CATEGORY,
+      accountName,
+      authData
+    );
   }
 
   private getDefaultScopes(account: RuntimeGoogleAccount): string[] {
     const scopes = new Set<string>([GOOGLE_USERINFO_SCOPE]);
-
-    if (account.scopes?.length) {
-      for (const scope of account.scopes) scopes.add(scope);
-      return Array.from(scopes);
-    }
 
     if (account.email) {
       for (const scope of DEFAULT_GMAIL_SCOPES) scopes.add(scope);
@@ -443,50 +369,83 @@ export default class GoogleService implements TokenRingService {
       for (const scope of DEFAULT_DRIVE_SCOPES) scopes.add(scope);
     }
 
-    if (scopes.size === 1) {
-      for (const scope of [...DEFAULT_GMAIL_SCOPES, ...DEFAULT_CALENDAR_SCOPES])
-        scopes.add(scope);
-    }
-
     return Array.from(scopes);
   }
 
-  private getStoredTokenPayload(accountName: string): StoredGoogleToken {
-    const account = this.requireAccount(accountName);
-    return GoogleStoredTokenSchema.parse({
-      userEmail: account.userEmail,
-      refreshToken: account.refreshToken,
-      accessToken: account.accessToken,
-      expiryDate: account.expiryDate,
-      grantedScopes: account.grantedScopes,
-    });
+  private createRequestFailure(context: string, error: unknown): Error {
+    const message =
+      error instanceof Error && error.message
+        ? `${context} failed: ${error.message}`
+        : `${context} failed`;
+    const requestError = new Error(message);
+    (requestError as Error & { cause?: unknown }).cause = error;
+    return requestError;
   }
 
-  private applyStoredTokenPayload(
+  private normalizeGoogleRequestError(
     accountName: string,
-    tokens: StoredGoogleToken,
-  ): void {
-    const account = this.requireAccount(accountName);
-    account.userEmail = tokens.userEmail;
-    account.refreshToken = tokens.refreshToken;
-    account.accessToken = tokens.accessToken;
-    account.expiryDate = tokens.expiryDate;
-    account.grantedScopes = tokens.grantedScopes;
+    request: GoogleRequestOptions,
+    error: unknown,
+  ): Error {
+    const failure = this.extractGoogleRequestFailure(error);
+    if (!failure) return this.createRequestFailure(request.context, error);
+
+    return this.createGoogleApiError(
+      accountName,
+      request.url ?? failure.url ?? "",
+      request.method ?? failure.method,
+      request.context,
+      failure.status,
+      failure.details,
+      request.requiredScopes,
+    );
+  }
+
+  private extractGoogleRequestFailure(error: unknown): {
+    details: unknown;
+    method?: string;
+    status: number;
+    url?: string;
+  } | undefined {
+    if (!error || typeof error !== "object") return undefined;
+
+    const response =
+      "response" in error && error.response && typeof error.response === "object"
+        ? error.response as {
+          data?: unknown;
+          status?: number;
+        }
+        : undefined;
+    if (typeof response?.status !== "number") return undefined;
+
+    const config =
+      "config" in error && error.config && typeof error.config === "object"
+        ? error.config as { method?: string; url?: string }
+        : undefined;
+
+    return {
+      details: response.data,
+      method: config?.method?.toUpperCase(),
+      status: response.status,
+      url: config?.url,
+    };
   }
 
   private createGoogleApiError(
     accountName: string,
     url: string,
-    init: RequestInit,
+    method: string | undefined,
     context: string,
     status: number,
     details: unknown,
+    requiredScopes?: string[],
   ): Error {
     const googleMessage = this.getGoogleApiErrorMessage(details);
     const missingScopes = this.getMissingGrantedScopes(
       accountName,
       url,
-      init.method,
+      method,
+      requiredScopes,
     );
 
     let message = `${context} failed (${status})`;
@@ -502,21 +461,19 @@ export default class GoogleService implements TokenRingService {
       message = `${context} failed (${status}): ${googleMessage}`;
     }
 
-    const error = new Error(message);
-    (error as Error & { details?: unknown }).details = details;
-    return error;
+    const requestError = new Error(message);
+    (requestError as Error & { details?: unknown }).details = details;
+    return requestError;
   }
 
   private getGoogleApiErrorMessage(details: unknown): string | undefined {
-    if (!details || typeof details !== "object")
+    if (!details || typeof details !== "object") {
       return typeof details === "string" ? details : undefined;
+    }
     const googleError = (details as GoogleApiErrorResponse).error;
     if (!googleError) return undefined;
     if (googleError.message) return googleError.message;
-    const nestedMessage = googleError.errors?.find(
-      (entry) => entry.message,
-    )?.message;
-    return nestedMessage;
+    return googleError.errors?.find((entry) => entry.message)?.message;
   }
 
   private isInsufficientScopeError(details: unknown): boolean {
@@ -544,15 +501,18 @@ export default class GoogleService implements TokenRingService {
     accountName: string,
     url: string,
     method?: string,
+    requiredScopes?: string[],
   ): string[] {
+
     const grantedScopes = new Set(
-      this.requireAccount(accountName).grantedScopes ?? [],
+      this.authData.get(accountName)?.grantedScopes ?? []
     );
+
     if (grantedScopes.size === 0) return [];
 
-    return this.getRequiredScopesForRequest(url, method).filter(
-      (scope) => !grantedScopes.has(scope),
-    );
+    const neededScopes =
+      requiredScopes ?? this.getRequiredScopesForRequest(url, method);
+    return neededScopes.filter((scope) => !grantedScopes.has(scope));
   }
 
   private getRequiredScopesForRequest(url: string, method?: string): string[] {
@@ -580,69 +540,36 @@ export default class GoogleService implements TokenRingService {
     }
 
     const normalizedMethod = (method ?? "GET").toUpperCase();
-    if (normalizedMethod === "GET")
+    if (normalizedMethod === "GET") {
       return ["https://www.googleapis.com/auth/gmail.readonly"];
-    if (parsed.pathname.endsWith("/drafts/send"))
+    }
+    if (parsed.pathname.endsWith("/drafts/send")) {
       return ["https://www.googleapis.com/auth/gmail.send"];
+    }
     return ["https://www.googleapis.com/auth/gmail.compose"];
   }
 
-  private async syncAccountProfile(accountName: string): Promise<string> {
-    const account = this.requireAccount(accountName);
-    if (account.userEmail) return account.userEmail;
+  private async syncAccountProfile(accountName: string): Promise<void> {
+    void this.requireAccount(accountName);
+    const authData = this.authData.get(accountName);
+    if (authData?.profile) return;
 
-    const profile = await this.fetchGoogleJson<GoogleUserInfoResponse>(
+    const profile = await this.withOAuth2Api(
       accountName,
-      "https://www.googleapis.com/oauth2/v2/userinfo",
-      {method: "GET"},
-      `fetch Google profile for ${accountName}`,
+      {
+        context: `fetch Google profile for ${accountName}`,
+        requiredScopes: [GOOGLE_USERINFO_SCOPE],
+      },
+      async (oauth2) => {
+        const {data} = await oauth2.userinfo.get();
+        return data;
+      },
     );
+    console.log(`Fetched profile for ${accountName}:`, profile);
 
-    if (!profile.email) {
-      throw new Error(
-        `Google did not return an email address for account "${accountName}"`,
-      );
-    }
-
-    account.userEmail = profile.email;
-    await this.persistAccountTokens(accountName, false);
-    return account.userEmail;
-  }
-
-  private async loadStoredTokens(accountName: string): Promise<void> {
-    if (!this.vaultService) return;
-    const stored = await this.vaultService
-      .getJsonItem<StoredGoogleToken>(GOOGLE_VAULT_CATEGORY, accountName)
-      .catch(() => undefined);
-    if (!stored) return;
-    this.applyStoredTokenPayload(
-      accountName,
-      GoogleStoredTokenSchema.parse(stored),
-    );
-  }
-
-  private async persistAccountTokens(
-    accountName: string,
-    required: boolean,
-  ): Promise<void> {
-    if (!this.vaultService) {
-      if (required) {
-        throw new Error(
-          "Google auth requires VaultService so tokens can be stored securely.",
-        );
-      }
-      return;
-    }
-
-    const payload = this.getStoredTokenPayload(accountName);
-    try {
-      await this.vaultService.setJsonItem(
-        GOOGLE_VAULT_CATEGORY,
-        accountName,
-        payload,
-      );
-    } catch (error) {
-      if (required) throw error;
-    }
+    this.authData.set(accountName, {
+      ...this.authData.get(accountName),
+      profile
+    })
   }
 }

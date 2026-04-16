@@ -25,10 +25,10 @@ describe("GoogleService", () => {
 
   it("includes Drive OAuth scope when Drive is configured", () => {
     const service = new GoogleService(GoogleConfigSchema.parse({
+      clientId: "client-id",
+      clientSecret: "client-secret",
       accounts: {
         primary: {
-          clientId: "client-id",
-          clientSecret: "client-secret",
           drive: {
             description: "Drive",
             rootFolderId: "root",
@@ -58,10 +58,10 @@ describe("GoogleService", () => {
       resources: {},
     });
     const service = new GoogleService(GoogleConfigSchema.parse({
+      clientId: "client-id",
+      clientSecret: "client-secret",
       accounts: {
         primary: {
-          clientId: "client-id",
-          clientSecret: "client-secret",
           email: {
             description: "Gmail",
           },
@@ -155,10 +155,10 @@ describe("GoogleService", () => {
 
   it("explains when Calendar access fails because the token is missing the Calendar scope", async () => {
     const service = new GoogleService(GoogleConfigSchema.parse({
+      clientId: "client-id",
+      clientSecret: "client-secret",
       accounts: {
         primary: {
-          clientId: "client-id",
-          clientSecret: "client-secret",
           accessToken: "access-token",
           expiryDate: Date.now() + 60_000,
           grantedScopes: [

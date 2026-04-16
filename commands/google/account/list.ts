@@ -12,28 +12,28 @@ export default {
 
 /google account list`,
   inputSchema,
-  execute: async ({
+  execute: ({
                     agent,
-                  }: AgentCommandInputType<typeof inputSchema>): Promise<string> => {
+                  }: AgentCommandInputType<typeof inputSchema>) => {
     const googleService = agent.requireServiceByType(GoogleService);
     const accounts = googleService.getAvailableAccounts();
     if (accounts.length === 0) return "No Google accounts are configured.";
 
-    const lines = await Promise.all(
-      accounts.map(async (name) => {
-        const account = googleService.requireAccount(name);
-        const authenticated = await googleService.isAccountAuthenticated(name);
+    const lines =
+      accounts.map((name) => {
+        const {isAuthenticated, account, profile} = googleService.getAccountStatus(name);
         const integrations =
           [
-            account.email ? "gmail" : null,
+            isAuthenticated ? "authenticated" : "not authenticated",
+            profile ? `profile (${profile.email})` : "no profile",
+            account.gmail ? "gmail" : null,
             account.calendar ? "calendar" : null,
             account.drive ? "drive" : null,
           ]
             .filter(Boolean)
-            .join(", ") || "oauth only";
-        return `- ${name}: ${account.userEmail ?? "(email available after authentication)"} [${authenticated ? "authenticated" : "not authenticated"}; ${integrations}]`;
-      }),
-    );
+            .join(", ");
+        return `- ${name}: ${account.email} [${integrations}]`;
+      });
 
     return `Available Google accounts:\n${lines.join("\n")}`;
   },

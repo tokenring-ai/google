@@ -4,7 +4,6 @@ import {CalendarService} from "@tokenring-ai/calendar";
 import {EmailService} from "@tokenring-ai/email";
 import {z} from "zod";
 import FileSystemService from "../filesystem/FileSystemService.ts";
-import VaultService from "../vault/VaultService.ts";
 import {WebHostService} from "../web-host/index.ts";
 import agentCommands from "./commands.ts";
 import GmailEmailProvider from "./GmailEmailProvider.ts";
@@ -13,35 +12,11 @@ import GoogleDriveFileSystemProvider from "./GoogleDriveFileSystemProvider.ts";
 import GoogleOAuthCallbackResource from "./GoogleOAuthCallbackResource.ts";
 import GoogleService from "./GoogleService.ts";
 import packageJSON from "./package.json" with {type: "json"};
-import {type GoogleAccount, GoogleConfigSchema} from "./schema.ts";
+import {GoogleConfigSchema,} from "./schema.ts";
 
 const packageConfigSchema = z.object({
-  google: GoogleConfigSchema.prefault({accounts: {}}),
+  google: GoogleConfigSchema.prefault({})
 });
-
-function addAccountsFromEnv(accounts: Record<string, GoogleAccount>) {
-  for (const [key, value] of Object.entries(process.env)) {
-    const match = key.match(/^GOOGLE_CLIENT_ID(\d*)$/);
-    if (!match || !value) continue;
-    const n = match[1];
-    const clientSecret = process.env[`GOOGLE_CLIENT_SECRET${n}`];
-    if (!clientSecret) continue;
-    const userEmail = process.env[`GOOGLE_USER_EMAIL${n}`];
-    const defaultName = `google-${n || "1"}`;
-    const name =
-      process.env[`GOOGLE_ACCOUNT_NAME${n}`] ?? userEmail ?? defaultName;
-    accounts[name] = {
-      clientId: value,
-      clientSecret,
-      userEmail,
-      refreshToken: process.env[`GOOGLE_REFRESH_TOKEN${n}`],
-      accessToken: process.env[`GOOGLE_ACCESS_TOKEN${n}`],
-      email: {description: "Gmail"},
-      calendar: {description: "Google Calendar", calendarId: "primary"},
-      drive: {description: "Google Drive", rootFolderId: "root"},
-    };
-  }
-}
 
 export default {
   name: packageJSON.name,
@@ -49,28 +24,24 @@ export default {
   version: packageJSON.version,
   description: packageJSON.description,
   install(app, config) {
-    addAccountsFromEnv(config.google.accounts);
+    config.google.clientId ??= process.env.GOOGLE_CLIENT_ID;
+    config.google.clientSecret ??= process.env.GOOGLE_CLIENT_SECRET;
 
-    const googleService = new GoogleService(
-      GoogleConfigSchema.parse(config.google),
-    );
+    const googleService = new GoogleService(app, config.google);
     app.addServices(googleService);
 
-    app.waitForService(VaultService, (vaultService) => {
-      googleService.setVaultService(vaultService);
-    });
     app.waitForService(AgentCommandService, (commandService) => {
       commandService.addAgentCommands(agentCommands);
     });
 
     for (const [name, account] of Object.entries(config.google.accounts)) {
-      const {email, calendar, drive} = account;
-      if (email) {
+      const {gmail, calendar, drive} = account;
+      if (gmail) {
         app.services.waitForItemByType(EmailService, (emailService) => {
           emailService.registerEmailProvider(
             name,
             new GmailEmailProvider(
-              {description: email.description, account: name},
+              {description: gmail.description, account: name},
               googleService,
             ),
           );

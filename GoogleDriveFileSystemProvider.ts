@@ -26,6 +26,7 @@ type ResolvedPath = {
 };
 
 const DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder";
+const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 
 export default class GoogleDriveFileSystemProvider
   implements FileSystemProvider {
@@ -53,8 +54,9 @@ export default class GoogleDriveFileSystemProvider
   ): Promise<boolean> {
     const components = this.pathToComponents(filePath);
     const fileName = components.pop();
-    if (!fileName)
+    if (!fileName) {
       throw new Error("Cannot write to the Google Drive root as a file.");
+    }
     const parentPath = components.join("/");
     const parentResolved = await this.resolvePathToId(parentPath, true);
     if (
@@ -68,30 +70,14 @@ export default class GoogleDriveFileSystemProvider
     }
     const {fileId: parentFileId} = parentResolved;
 
-    const existingFile = await this.findFileOrFolder(
-      fileName,
-      parentFileId,
-    );
+    const existingFile = await this.findFileOrFolder(fileName, parentFileId);
     if (existingFile?.mimeType === DRIVE_FOLDER_MIME) {
       throw new Error(`Cannot overwrite folder '${filePath}' with a file.`);
     }
 
-    await this.uploadFile(
-      parentFileId,
-      fileName,
-      content,
-      existingFile?.id,
-    );
+    await this.uploadFile(parentFileId, fileName, content, existingFile?.id);
     this.invalidateCache();
     return true;
-  }
-
-  private normalizePath(filePath: string): string {
-    return this.pathToComponents(filePath).join("/");
-  }
-
-  private invalidateCache(): void {
-    this.idCache.clear();
   }
 
   async appendFile(
@@ -110,14 +96,23 @@ export default class GoogleDriveFileSystemProvider
 
   async deleteFile(filePath: string): Promise<boolean> {
     const resolved = await this.resolvePathToId(filePath);
-    if (!resolved.fileId)
+    if (!resolved.fileId) {
       throw new Error(`Cannot delete, path not found: ${filePath}`);
+    }
 
-    await this.googleService.fetchGoogleRaw(
+    await this.googleService.withDrive(
       this.account,
-      `https://www.googleapis.com/drive/v3/files/${resolved.fileId}?supportsAllDrives=true`,
-      {method: "DELETE"},
-      "delete Google Drive file",
+      {
+        context: "delete Google Drive file",
+        method: "DELETE",
+        requiredScopes: [GOOGLE_DRIVE_SCOPE],
+      },
+      async (drive) => {
+        await drive.files.delete({
+          fileId: resolved.fileId!,
+          supportsAllDrives: true,
+        });
+      },
     );
     this.invalidateCache();
     return true;
@@ -125,23 +120,37 @@ export default class GoogleDriveFileSystemProvider
 
   async readFile(filePath: string): Promise<Buffer | null> {
     const resolved = await this.resolvePathToId(filePath);
-    if (!resolved.item || resolved.item.mimeType === DRIVE_FOLDER_MIME)
+    if (!resolved.item || resolved.item.mimeType === DRIVE_FOLDER_MIME) {
       return null;
+    }
 
-    const response = await this.googleService.fetchGoogleRaw(
+    return await this.googleService.withDrive<Buffer>(
       this.account,
-      `https://www.googleapis.com/drive/v3/files/${resolved.item.id}?alt=media&supportsAllDrives=true`,
-      {method: "GET"},
-      "read Google Drive file",
-    );
+      {
+        context: "read Google Drive file",
+        method: "GET",
+        requiredScopes: [GOOGLE_DRIVE_SCOPE],
+      },
+      async (drive) => {
+        const response = await drive.files.get(
+          {
+            alt: "media",
+            fileId: resolved.item!.id,
+            supportsAllDrives: true,
+          },
+          {responseType: "arraybuffer"},
+        );
 
-    return Buffer.from(await response.arrayBuffer());
+        return this.toBuffer(response.data);
+      },
+    );
   }
 
   async rename(oldPath: string, newPath: string): Promise<boolean> {
     const resolvedOld = await this.resolvePathToId(oldPath);
-    if (!resolvedOld.item)
+    if (!resolvedOld.item) {
       throw new Error(`Source path does not exist: ${oldPath}`);
+    }
 
     const components = this.pathToComponents(newPath);
     const newFileName = components.pop();
@@ -158,39 +167,42 @@ export default class GoogleDriveFileSystemProvider
       );
     }
 
-    const url = new URL(
-      `https://www.googleapis.com/drive/v3/files/${resolvedOld.item.id}`,
-    );
-    url.searchParams.set("supportsAllDrives", "true");
     const oldParentId = resolvedOld.item.parents?.[0];
+    let addParents: string | undefined;
+    let removeParents: string | undefined;
     if (
       resolvedNewParent.fileId &&
       oldParentId &&
       oldParentId !== resolvedNewParent.fileId
     ) {
-      url.searchParams.set("addParents", resolvedNewParent.fileId);
-      url.searchParams.set("removeParents", oldParentId);
+      addParents = resolvedNewParent.fileId;
+      removeParents = oldParentId;
     } else if (
       resolvedNewParent.fileId &&
       !oldParentId &&
       resolvedNewParent.fileId !== this.rootFolderId
     ) {
-      url.searchParams.set("addParents", resolvedNewParent.fileId);
+      addParents = resolvedNewParent.fileId;
     }
-    url.searchParams.set(
-      "fields",
-      "id,name,mimeType,parents,size,createdTime,modifiedTime",
-    );
 
-    await this.googleService.fetchGoogleJson<DriveFile>(
+    await this.googleService.withDrive<DriveFile>(
       this.account,
-      url.toString(),
       {
+        context: "rename Google Drive file",
         method: "PATCH",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({name: newFileName}),
+        requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      "rename Google Drive file",
+      async (drive) => {
+        const {data} = await drive.files.update({
+          addParents,
+          fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
+          fileId: resolvedOld.item!.id,
+          removeParents,
+          requestBody: {name: newFileName},
+          supportsAllDrives: true,
+        });
+        return data as DriveFile;
+      },
     );
 
     this.invalidateCache();
@@ -244,10 +256,7 @@ export default class GoogleDriveFileSystemProvider
     }
     const {fileId: parentFileId} = resolvedParent;
 
-    const existingItem = await this.findFileOrFolder(
-      dirName,
-      parentFileId,
-    );
+    const existingItem = await this.findFileOrFolder(dirName, parentFileId);
     if (existingItem) {
       if (existingItem.mimeType === DRIVE_FOLDER_MIME) return true;
       throw new Error(
@@ -299,26 +308,41 @@ export default class GoogleDriveFileSystemProvider
       );
     }
     if (existingDestItem && options.overwrite) {
-      await this.googleService.fetchGoogleRaw(
+      await this.googleService.withDrive(
         this.account,
-        `https://www.googleapis.com/drive/v3/files/${existingDestItem.id}?supportsAllDrives=true`,
-        {method: "DELETE"},
-        "overwrite Google Drive destination",
+        {
+          context: "overwrite Google Drive destination",
+          method: "DELETE",
+          requiredScopes: [GOOGLE_DRIVE_SCOPE],
+        },
+        async (drive) => {
+          await drive.files.delete({
+            fileId: existingDestItem.id,
+            supportsAllDrives: true,
+          });
+        },
       );
     }
 
-    await this.googleService.fetchGoogleJson<DriveFile>(
+    await this.googleService.withDrive<DriveFile>(
       this.account,
-      `https://www.googleapis.com/drive/v3/files/${sourceResolved.item.id}/copy?fields=id,name,mimeType,parents,size,createdTime,modifiedTime&supportsAllDrives=true`,
       {
+        context: "copy Google Drive file",
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          name: destFileName,
-          parents: [destParentFileId],
-        }),
+        requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      "copy Google Drive file",
+      async (drive) => {
+        const {data} = await drive.files.copy({
+          fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
+          fileId: sourceResolved.item!.id,
+          requestBody: {
+            name: destFileName,
+            parents: [destParentFileId],
+          },
+          supportsAllDrives: true,
+        });
+        return data as DriveFile;
+      },
     );
 
     this.invalidateCache();
@@ -372,6 +396,14 @@ export default class GoogleDriveFileSystemProvider
     return (await this.resolvePathToId(filePath)).item != null;
   }
 
+  private normalizePath(filePath: string): string {
+    return this.pathToComponents(filePath).join("/");
+  }
+
+  private invalidateCache(): void {
+    this.idCache.clear();
+  }
+
   private pathToComponents(filePath: string): string[] {
     return filePath
       .replace(/^\/+|\/+$/g, "")
@@ -388,23 +420,24 @@ export default class GoogleDriveFileSystemProvider
     let query = `name='${escapedName}' and '${parentId}' in parents and trashed=false`;
     if (mimeType) query += ` and mimeType='${mimeType}'`;
 
-    const url = new URL("https://www.googleapis.com/drive/v3/files");
-    url.searchParams.set("q", query);
-    url.searchParams.set(
-      "fields",
-      "files(id,name,mimeType,parents,size,createdTime,modifiedTime)",
+    const response = await this.googleService.withDrive<DriveListResponse>(
+      this.account,
+      {
+        context: "find Google Drive file",
+        method: "GET",
+        requiredScopes: [GOOGLE_DRIVE_SCOPE],
+      },
+      async (drive) => {
+        const {data} = await drive.files.list({
+          fields: "files(id,name,mimeType,parents,size,createdTime,modifiedTime)",
+          includeItemsFromAllDrives: true,
+          pageSize: 1,
+          q: query,
+          supportsAllDrives: true,
+        });
+        return data as DriveListResponse;
+      },
     );
-    url.searchParams.set("pageSize", "1");
-    url.searchParams.set("supportsAllDrives", "true");
-    url.searchParams.set("includeItemsFromAllDrives", "true");
-
-    const response =
-      await this.googleService.fetchGoogleJson<DriveListResponse>(
-        this.account,
-        url.toString(),
-        {method: "GET"},
-        "find Google Drive file",
-      );
 
     return response.files?.[0] ?? null;
   }
@@ -414,24 +447,26 @@ export default class GoogleDriveFileSystemProvider
     let pageToken: string | undefined;
 
     do {
-      const url = new URL("https://www.googleapis.com/drive/v3/files");
-      url.searchParams.set("q", `'${parentId}' in parents and trashed=false`);
-      url.searchParams.set(
-        "fields",
-        "nextPageToken,files(id,name,mimeType,parents,size,createdTime,modifiedTime)",
+      const response = await this.googleService.withDrive<DriveListResponse>(
+        this.account,
+        {
+          context: "list Google Drive folder",
+          method: "GET",
+          requiredScopes: [GOOGLE_DRIVE_SCOPE],
+        },
+        async (drive) => {
+          const {data} = await drive.files.list({
+            fields:
+              "nextPageToken,files(id,name,mimeType,parents,size,createdTime,modifiedTime)",
+            includeItemsFromAllDrives: true,
+            pageSize: 200,
+            pageToken,
+            q: `'${parentId}' in parents and trashed=false`,
+            supportsAllDrives: true,
+          });
+          return data as DriveListResponse;
+        },
       );
-      url.searchParams.set("pageSize", "200");
-      url.searchParams.set("supportsAllDrives", "true");
-      url.searchParams.set("includeItemsFromAllDrives", "true");
-      if (pageToken) url.searchParams.set("pageToken", pageToken);
-
-      const response =
-        await this.googleService.fetchGoogleJson<DriveListResponse>(
-          this.account,
-          url.toString(),
-          {method: "GET"},
-          "list Google Drive folder",
-        );
 
       files.push(...(response.files ?? []));
       pageToken = response.nextPageToken;
@@ -525,21 +560,25 @@ export default class GoogleDriveFileSystemProvider
     name: string,
     parentId: string,
   ): Promise<DriveFile> {
-    const body = JSON.stringify({
-      name,
-      mimeType: DRIVE_FOLDER_MIME,
-      parents: [parentId],
-    });
-
-    return await this.googleService.fetchGoogleJson<DriveFile>(
+    return await this.googleService.withDrive<DriveFile>(
       this.account,
-      "https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,parents,size,createdTime,modifiedTime&supportsAllDrives=true",
       {
+        context: "create Google Drive folder",
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body,
+        requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      "create Google Drive folder",
+      async (drive) => {
+        const {data} = await drive.files.create({
+          fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
+          requestBody: {
+            mimeType: DRIVE_FOLDER_MIME,
+            name,
+            parents: [parentId],
+          },
+          supportsAllDrives: true,
+        });
+        return data as DriveFile;
+      },
     );
   }
 
@@ -549,45 +588,60 @@ export default class GoogleDriveFileSystemProvider
     content: string | Buffer,
     existingFileId?: string,
   ): Promise<DriveFile> {
-    const boundary = `tokenring-drive-${Date.now()}`;
-    const metadata = Buffer.from(
-      JSON.stringify({name: fileName, parents: [parentId]}),
-      "utf8",
-    );
     const fileBuffer = Buffer.isBuffer(content)
       ? content
       : Buffer.from(content, "utf8");
-    const preamble = Buffer.from(
-      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
-      "utf8",
-    );
-    const middle = Buffer.from(
-      `\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`,
-      "utf8",
-    );
-    const closing = Buffer.from(`\r\n--${boundary}--`, "utf8");
-    const body = Buffer.concat([
-      preamble,
-      metadata,
-      middle,
-      fileBuffer,
-      closing,
-    ]);
 
-    const method = existingFileId ? "PATCH" : "POST";
-    const endpoint = existingFileId
-      ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart&fields=id,name,mimeType,parents,size,createdTime,modifiedTime&supportsAllDrives=true`
-      : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,parents,size,createdTime,modifiedTime&supportsAllDrives=true";
-
-    return await this.googleService.fetchGoogleJson<DriveFile>(
+    return await this.googleService.withDrive<DriveFile>(
       this.account,
-      endpoint,
       {
-        method,
-        headers: {"Content-Type": `multipart/related; boundary=${boundary}`},
-        body,
+        context: existingFileId
+          ? "update Google Drive file"
+          : "create Google Drive file",
+        method: existingFileId ? "PATCH" : "POST",
+        requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      existingFileId ? "update Google Drive file" : "create Google Drive file",
+      async (drive) => {
+        const requestBody = {
+          name: fileName,
+          parents: [parentId],
+        };
+
+        if (existingFileId) {
+          const {data} = await drive.files.update({
+            fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
+            fileId: existingFileId,
+            media: {
+              body: fileBuffer,
+              mimeType: "application/octet-stream",
+            },
+            requestBody,
+            supportsAllDrives: true,
+          });
+          return data as DriveFile;
+        }
+
+        const {data} = await drive.files.create({
+          fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
+          media: {
+            body: fileBuffer,
+            mimeType: "application/octet-stream",
+          },
+          requestBody,
+          supportsAllDrives: true,
+        });
+        return data as DriveFile;
+      },
     );
+  }
+
+  private toBuffer(value: unknown): Buffer {
+    if (Buffer.isBuffer(value)) return value;
+    if (value instanceof ArrayBuffer) return Buffer.from(value);
+    if (ArrayBuffer.isView(value)) {
+      return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+    }
+    if (typeof value === "string") return Buffer.from(value, "utf8");
+    return Buffer.from([]);
   }
 }

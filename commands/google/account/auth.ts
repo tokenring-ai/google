@@ -52,8 +52,7 @@ export default {
     if (!accountName)
       throw new CommandFailedError("Usage: /google account auth <accountName>");
 
-    const account = googleService.requireAccount(accountName);
-    await googleService.requireVault(agent);
+    void googleService.requireAccount(accountName);
 
     const redirectUri = new URL(
       GOOGLE_OAUTH_CALLBACK_PATH,
@@ -64,7 +63,7 @@ export default {
 
     agent.chatOutput(
       [
-        `Open this URL to sign in to Google for ${accountName}${account.userEmail ? ` (${account.userEmail})` : ""}:`,
+        `Open this URL to sign in to Google for ${accountName}`,
         authorizationUrl,
         "",
         `TokenRing is listening for the OAuth callback at ${redirectUri}.`,
@@ -84,15 +83,17 @@ export default {
     );
 
     const code = extractAuthorizationCode(callbackUrl);
-    const updatedAccount = await googleService.exchangeAuthorizationCode(
+    const {isAuthenticated, profile} = await googleService.exchangeAuthorizationCode(
       accountName,
       code,
       redirectUri,
     );
 
-    return updatedAccount.refreshToken
-      ? `Google account "${accountName}" authenticated as ${updatedAccount.userEmail ?? "unknown"} and tokens were saved to the vault.`
-      : `Google account "${accountName}" authenticated as ${updatedAccount.userEmail ?? "unknown"}, but Google did not return a refresh token. The current access token was saved to the vault.`;
+    if (!isAuthenticated) {
+      throw new CommandFailedError(`Google account "${accountName}" authentication failed`);
+    }
+
+    return `Google account "${accountName}" authenticated with email ${profile?.email ?? "unknown"}.`;
   },
   help: `Authenticate a Google account and store its OAuth tokens in the vault.
 

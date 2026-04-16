@@ -11,16 +11,45 @@ function encodeBase64Url(value: string): string {
 
 describe("GmailEmailProvider", () => {
   let googleService: {
-    fetchGoogleJson: ReturnType<typeof vi.fn>;
+    getUserEmail: ReturnType<typeof vi.fn>;
+    withGmail: ReturnType<typeof vi.fn>;
     requireUserEmail: ReturnType<typeof vi.fn>;
+  };
+  let gmailApi: {
+    users: {
+      labels: {list: ReturnType<typeof vi.fn>};
+      messages: {
+        get: ReturnType<typeof vi.fn>;
+        list: ReturnType<typeof vi.fn>;
+      };
+    };
   };
   let provider: GmailEmailProvider;
 
   beforeEach(() => {
     googleService = {
-      fetchGoogleJson: vi.fn(),
+      getUserEmail: vi.fn(),
+      withGmail: vi.fn(),
       requireUserEmail: vi.fn(),
     };
+    gmailApi = {
+      users: {
+        labels: {
+          list: vi.fn(),
+        },
+        messages: {
+          get: vi.fn(),
+          list: vi.fn(),
+        },
+      },
+    };
+    googleService.withGmail.mockImplementation(
+      async (
+        _account: string,
+        _request: unknown,
+        callback: (gmail: typeof gmailApi) => Promise<unknown>,
+      ) => await callback(gmailApi),
+    );
     provider = new GmailEmailProvider({
       description: "Primary Gmail",
       account: "primary",
@@ -28,12 +57,14 @@ describe("GmailEmailProvider", () => {
   });
 
   it("lists supported email boxes from Gmail labels", async () => {
-    googleService.fetchGoogleJson.mockResolvedValueOnce({
-      labels: [
-        {id: "INBOX", name: "INBOX", type: "system"},
-        {id: "STARRED", name: "STARRED", type: "system"},
-        {id: "SENT", name: "SENT", type: "system"},
-      ],
+    gmailApi.users.labels.list.mockResolvedValueOnce({
+      data: {
+        labels: [
+          {id: "INBOX", name: "INBOX", type: "system"},
+          {id: "STARRED", name: "STARRED", type: "system"},
+          {id: "SENT", name: "SENT", type: "system"},
+        ],
+      },
     });
 
     await expect(provider.listBoxes()).resolves.toEqual([
@@ -43,20 +74,20 @@ describe("GmailEmailProvider", () => {
   });
 
   it("returns paginated messages for the requested box", async () => {
-    googleService.fetchGoogleJson
-      .mockImplementationOnce(async (_account: string, url: string) => {
-        const parsed = new URL(url);
+    gmailApi.users.messages.list.mockImplementationOnce(async (request) => {
+      expect(request.q).toBe("in:sent is:unread");
+      expect(request.maxResults).toBe(10);
+      expect(request.pageToken).toBe("page-1");
 
-        expect(parsed.searchParams.get("q")).toBe("in:sent is:unread");
-        expect(parsed.searchParams.get("maxResults")).toBe("10");
-        expect(parsed.searchParams.get("pageToken")).toBe("page-1");
-
-        return {
+      return {
+        data: {
           messages: [{id: "message-1", threadId: "thread-1"}],
           nextPageToken: "page-2",
-        };
-      })
-      .mockResolvedValueOnce({
+        },
+      };
+    });
+    gmailApi.users.messages.get.mockResolvedValueOnce({
+      data: {
         id: "message-1",
         threadId: "thread-1",
         internalDate: "1700000000000",
@@ -73,7 +104,8 @@ describe("GmailEmailProvider", () => {
             data: encodeBase64Url("Latest status"),
           },
         },
-      });
+      },
+    });
 
     await expect(provider.getMessages({
       box: "sent",

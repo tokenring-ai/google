@@ -39,6 +39,8 @@ type GoogleCalendarListResponse = {
   items?: GoogleCalendarEventResponse[];
 };
 
+const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
+
 export default class GoogleCalendarProvider implements CalendarProvider {
   description: string;
   private readonly account: string;
@@ -58,21 +60,24 @@ export default class GoogleCalendarProvider implements CalendarProvider {
   async getUpcomingEvents(
     filter: CalendarEventFilterOptions,
   ): Promise<CalendarEvent[]> {
-    const url = new URL(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`,
-    );
-    url.searchParams.set("singleEvents", "true");
-    url.searchParams.set("orderBy", "startTime");
-    url.searchParams.set("maxResults", String(filter.limit ?? 10));
-    url.searchParams.set("timeMin", (filter.from ?? new Date()).toISOString());
-    if (filter.to) url.searchParams.set("timeMax", filter.to.toISOString());
-
     const response =
-      await this.googleService.fetchGoogleJson<GoogleCalendarListResponse>(
+      await this.googleService.withCalendar<GoogleCalendarListResponse>(
         this.account,
-        url.toString(),
-        {method: "GET"},
-        "list Google Calendar events",
+        {
+          context: "list Google Calendar events",
+          requiredScopes: [GOOGLE_CALENDAR_SCOPE],
+        },
+        async (calendar) => {
+          const {data} = await calendar.events.list({
+            calendarId: this.calendarId,
+            maxResults: filter.limit ?? 10,
+            orderBy: "startTime",
+            singleEvents: true,
+            timeMax: filter.to?.toISOString(),
+            timeMin: (filter.from ?? new Date()).toISOString(),
+          });
+          return data as GoogleCalendarListResponse;
+        },
       );
 
     return (response.items ?? []).map((item) => this.toCalendarEvent(item));
@@ -81,27 +86,27 @@ export default class GoogleCalendarProvider implements CalendarProvider {
   async searchEvents(
     filter: CalendarEventSearchOptions,
   ): Promise<CalendarEvent[]> {
-    const url = new URL(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`,
-    );
-    url.searchParams.set("singleEvents", "true");
-    url.searchParams.set("orderBy", "startTime");
-    url.searchParams.set("maxResults", String(filter.limit ?? 10));
-    url.searchParams.set("q", filter.query);
-    url.searchParams.set(
-      "timeMin",
-      (
-        filter.from ?? new Date(Date.now() - 1000 * 60 * 60 * 24 * 30)
-      ).toISOString(),
-    );
-    if (filter.to) url.searchParams.set("timeMax", filter.to.toISOString());
-
     const response =
-      await this.googleService.fetchGoogleJson<GoogleCalendarListResponse>(
+      await this.googleService.withCalendar<GoogleCalendarListResponse>(
         this.account,
-        url.toString(),
-        {method: "GET"},
-        "search Google Calendar events",
+        {
+          context: "search Google Calendar events",
+          requiredScopes: [GOOGLE_CALENDAR_SCOPE],
+        },
+        async (calendar) => {
+          const {data} = await calendar.events.list({
+            calendarId: this.calendarId,
+            maxResults: filter.limit ?? 10,
+            orderBy: "startTime",
+            q: filter.query,
+            singleEvents: true,
+            timeMax: filter.to?.toISOString(),
+            timeMin: (
+              filter.from ?? new Date(Date.now() - 1000 * 60 * 60 * 24 * 30)
+            ).toISOString(),
+          });
+          return data as GoogleCalendarListResponse;
+        },
       );
 
     return (response.items ?? []).map((item) => this.toCalendarEvent(item));
@@ -109,14 +114,19 @@ export default class GoogleCalendarProvider implements CalendarProvider {
 
   async createEvent(data: CreateCalendarEventData): Promise<CalendarEvent> {
     const response =
-      await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
+      await this.googleService.withCalendar<GoogleCalendarEventResponse>(
         this.account,
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events`,
         {
-          method: "POST",
-          body: JSON.stringify(this.toGoogleEventBody(data)),
+          context: "create Google Calendar event",
+          requiredScopes: [GOOGLE_CALENDAR_SCOPE],
         },
-        "create Google Calendar event",
+        async (calendar) => {
+          const {data: responseData} = await calendar.events.insert({
+            calendarId: this.calendarId,
+            requestBody: this.toGoogleEventBody(data),
+          });
+          return responseData as GoogleCalendarEventResponse;
+        },
       );
 
     return this.toCalendarEvent(response);
@@ -127,14 +137,20 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     data: UpdateCalendarEventData,
   ): Promise<CalendarEvent> {
     const response =
-      await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
+      await this.googleService.withCalendar<GoogleCalendarEventResponse>(
         this.account,
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
         {
-          method: "PUT",
-          body: JSON.stringify(this.toGoogleEventBody(data)),
+          context: "update Google Calendar event",
+          requiredScopes: [GOOGLE_CALENDAR_SCOPE],
         },
-        "update Google Calendar event",
+        async (calendar) => {
+          const {data: responseData} = await calendar.events.update({
+            calendarId: this.calendarId,
+            eventId: id,
+            requestBody: this.toGoogleEventBody(data),
+          });
+          return responseData as GoogleCalendarEventResponse;
+        },
       );
 
     return this.toCalendarEvent(response);
@@ -142,22 +158,38 @@ export default class GoogleCalendarProvider implements CalendarProvider {
 
   async getEventById(id: string): Promise<CalendarEvent> {
     const response =
-      await this.googleService.fetchGoogleJson<GoogleCalendarEventResponse>(
+      await this.googleService.withCalendar<GoogleCalendarEventResponse>(
         this.account,
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
-        {method: "GET"},
-        `fetch Google Calendar event ${id}`,
+        {
+          context: `fetch Google Calendar event ${id}`,
+          requiredScopes: [GOOGLE_CALENDAR_SCOPE],
+        },
+        async (calendar) => {
+          const {data} = await calendar.events.get({
+            calendarId: this.calendarId,
+            eventId: id,
+          });
+          return data as GoogleCalendarEventResponse;
+        },
       );
 
     return this.toCalendarEvent(response);
   }
 
   async deleteEvent(id: string): Promise<void> {
-    await this.googleService.fetchGoogleRaw(
+    await this.googleService.withCalendar(
       this.account,
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.calendarId)}/events/${encodeURIComponent(id)}`,
-      {method: "DELETE"},
-      "delete Google Calendar event",
+      {
+        context: "delete Google Calendar event",
+        method: "DELETE",
+        requiredScopes: [GOOGLE_CALENDAR_SCOPE],
+      },
+      async (calendar) => {
+        await calendar.events.delete({
+          calendarId: this.calendarId,
+          eventId: id,
+        });
+      },
     );
   }
 

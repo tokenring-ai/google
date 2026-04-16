@@ -58,6 +58,9 @@ const gmailSystemBoxes = [
   {id: "spam", name: "Spam", query: "in:spam", labelName: "SPAM"},
   {id: "trash", name: "Trash", query: "in:trash", labelName: "TRASH"},
 ] as const;
+const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+const GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
+const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
 export default class GmailEmailProvider implements EmailProvider {
   description: string;
@@ -72,13 +75,17 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   async listBoxes(): Promise<EmailBox[]> {
-    const response =
-      await this.googleService.fetchGoogleJson<GmailLabelListResponse>(
-        this.account,
-        "https://gmail.googleapis.com/gmail/v1/users/me/labels",
-        {method: "GET"},
-        "list Gmail labels",
-      );
+    const response = await this.googleService.withGmail<GmailLabelListResponse>(
+      this.account,
+      {
+        context: "list Gmail labels",
+        requiredScopes: [GMAIL_READ_SCOPE],
+      },
+      async (gmail) => {
+        const {data} = await gmail.users.labels.list({userId: "me"});
+        return data as GmailLabelListResponse;
+      },
+    );
 
     const availableLabelNames = new Set(
       (response.labels ?? []).map((label) => label.name),
@@ -116,56 +123,70 @@ export default class GmailEmailProvider implements EmailProvider {
 
   async createDraft(data: DraftEmailData): Promise<EmailDraft> {
     const raw = this.encodeBase64Url(await this.buildMimeMessage(data));
-    const response =
-      await this.googleService.fetchGoogleJson<GmailDraftResponse>(
-        this.account,
-        "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
-        {
-          method: "POST",
-          body: JSON.stringify({
+    const response = await this.googleService.withGmail<GmailDraftResponse>(
+      this.account,
+      {
+        context: "create Gmail draft",
+        requiredScopes: [GMAIL_COMPOSE_SCOPE],
+      },
+      async (gmail) => {
+        const {data: responseData} = await gmail.users.drafts.create({
+          requestBody: {
             message: {
               raw,
               threadId: data.threadId,
             },
-          }),
-        },
-        "create Gmail draft",
-      );
+          },
+          userId: "me",
+        });
+        return responseData as GmailDraftResponse;
+      },
+    );
 
     return this.gmailDraftToEmailDraft(response, data);
   }
 
   async updateDraft(data: EmailDraft): Promise<EmailDraft> {
     const raw = this.encodeBase64Url(await this.buildMimeMessage(data));
-    const response =
-      await this.googleService.fetchGoogleJson<GmailDraftResponse>(
-        this.account,
-        `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${data.id}`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
+    const response = await this.googleService.withGmail<GmailDraftResponse>(
+      this.account,
+      {
+        context: "update Gmail draft",
+        requiredScopes: [GMAIL_COMPOSE_SCOPE],
+      },
+      async (gmail) => {
+        const {data: responseData} = await gmail.users.drafts.update({
+          id: data.id,
+          requestBody: {
             id: data.id,
             message: {
               raw,
               threadId: data.threadId,
             },
-          }),
-        },
-        "update Gmail draft",
-      );
+          },
+          userId: "me",
+        });
+        return responseData as GmailDraftResponse;
+      },
+    );
 
     return this.gmailDraftToEmailDraft(response, data);
   }
 
   async sendDraft(id: string): Promise<void> {
-    await this.googleService.fetchGoogleJson<GmailSendResponse>(
+    await this.googleService.withGmail<GmailSendResponse>(
       this.account,
-      "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
       {
-        method: "POST",
-        body: JSON.stringify({id}),
+        context: "send Gmail draft",
+        requiredScopes: [GMAIL_SEND_SCOPE],
       },
-      "send Gmail draft",
+      async (gmail) => {
+        const {data} = await gmail.users.drafts.send({
+          requestBody: {id},
+          userId: "me",
+        });
+        return data as GmailSendResponse;
+      },
     );
   }
 
@@ -174,20 +195,22 @@ export default class GmailEmailProvider implements EmailProvider {
     limit: number,
     pageToken?: string,
   ): Promise<EmailMessagePage> {
-    const url = new URL(
-      "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+    const list = await this.googleService.withGmail<GmailMessageListResponse>(
+      this.account,
+      {
+        context: "list Gmail messages",
+        requiredScopes: [GMAIL_READ_SCOPE],
+      },
+      async (gmail) => {
+        const {data} = await gmail.users.messages.list({
+          maxResults: limit,
+          pageToken,
+          q: query || undefined,
+          userId: "me",
+        });
+        return data as GmailMessageListResponse;
+      },
     );
-    url.searchParams.set("maxResults", limit.toString());
-    if (query) url.searchParams.set("q", query);
-    if (pageToken) url.searchParams.set("pageToken", pageToken);
-
-    const list =
-      await this.googleService.fetchGoogleJson<GmailMessageListResponse>(
-        this.account,
-        url.toString(),
-        {method: "GET"},
-        "list Gmail messages",
-      );
 
     const messageIds = list.messages ?? [];
     const messages = await Promise.all(
@@ -201,13 +224,21 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   private async getMessage(id: string): Promise<EmailMessage> {
-    const response =
-      await this.googleService.fetchGoogleJson<GmailMessageResponse>(
-        this.account,
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
-        {method: "GET"},
-        `fetch Gmail message ${id}`,
-      );
+    const response = await this.googleService.withGmail<GmailMessageResponse>(
+      this.account,
+      {
+        context: `fetch Gmail message ${id}`,
+        requiredScopes: [GMAIL_READ_SCOPE],
+      },
+      async (gmail) => {
+        const {data} = await gmail.users.messages.get({
+          format: "full",
+          id,
+          userId: "me",
+        });
+        return data as GmailMessageResponse;
+      },
+    );
 
     return this.gmailMessageToEmailMessage(response);
   }
@@ -270,9 +301,10 @@ export default class GmailEmailProvider implements EmailProvider {
     };
   }
 
-  private async buildMimeMessage(data: DraftEmailData): Promise<string> {
-    const from = await this.googleService.requireUserEmail(this.account);
-    const headers = [`From: ${from}`, `To: ${this.formatAddressList(data.to)}`];
+  private buildMimeMessage(data: DraftEmailData): string {
+    const {profile, account} = this.googleService.getAccountStatus(this.account);
+
+    const headers = [`From: ${profile?.email ?? account.email}`, `To: ${this.formatAddressList(data.to)}`];
 
     if (data.cc?.length) headers.push(`Cc: ${this.formatAddressList(data.cc)}`);
     if (data.bcc?.length)
@@ -370,9 +402,10 @@ export default class GmailEmailProvider implements EmailProvider {
 
   private parseAddress(value?: string): { email: string; name?: string } {
     const [address] = this.parseAddressList(value);
+
     return (
       address ?? {
-        email: this.googleService.getUserEmail(this.account) ?? "me",
+        email: "unknown",
       }
     );
   }
