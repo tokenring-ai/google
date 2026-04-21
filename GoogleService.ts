@@ -1,27 +1,28 @@
+import { randomUUID } from "node:crypto";
 import type TokenRingApp from "@tokenring-ai/app";
-import type {TokenRingService} from "@tokenring-ai/app/types";
+import type { TokenRingService } from "@tokenring-ai/app/types";
+import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
 import VaultService from "@tokenring-ai/vault/VaultService";
-import {type Auth, type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2} from "googleapis";
-import {randomUUID} from "node:crypto";
-import type {z} from "zod";
-import {type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema} from "./schema.ts";
+import { type Auth, type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2 } from "googleapis";
+import type { z } from "zod";
+import { type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema } from "./schema.ts";
 
 type GoogleApiErrorResponse = {
   error?: {
-    code?: number;
-    message?: string;
-    status?: string;
+    code?: number | undefined;
+    message?: string | undefined;
+    status?: string | undefined;
     errors?: Array<{
-      domain?: string;
-      message?: string;
-      reason?: string;
+      domain?: string | undefined;
+      message?: string | undefined;
+      reason?: string | undefined;
     }>;
     details?: Array<{
-      "@type"?: string;
-      domain?: string;
-      reason?: string;
-      metadata?: Record<string, string>;
+      "@type"?: string | undefined;
+      domain?: string | undefined;
+      reason?: string | undefined;
+      metadata?: Record<string, string> | undefined;
     }>;
   };
 };
@@ -43,7 +44,7 @@ type GoogleOAuthTokenUpdate = {
 type GoogleRequestOptions = {
   context: string;
   method?: string;
-  requiredScopes?: string[];
+  requiredScopes?: string[] | undefined;
   url?: string;
 };
 
@@ -74,10 +75,7 @@ export default class GoogleService implements TokenRingService {
 
   private readonly accounts = new KeyedRegistry<RuntimeGoogleAccount>();
   private readonly authData = new Map<string, StoredGoogleToken>();
-  private readonly pendingAuthorizations = new Map<
-    string,
-    PendingAuthorization
-  >();
+  private readonly pendingAuthorizations = new Map<string, PendingAuthorization>();
 
   getAvailableAccounts = this.accounts.keysArray;
   requireAccount = this.accounts.require;
@@ -90,19 +88,21 @@ export default class GoogleService implements TokenRingService {
   ) {
     this.accounts.setAll(options.accounts);
 
-    app.waitForService(VaultService, async (vaultService) => {
+    app.waitForService(VaultService, async vaultService => {
       this.vaultService = vaultService;
 
       for (const accountName of this.accounts.keysArray()) {
         try {
-          const stored = this.vaultService
-            .requireJsonItem(GOOGLE_VAULT_CATEGORY, accountName, GoogleStoredTokenSchema);
+          const stored = this.vaultService.requireJsonItem(GOOGLE_VAULT_CATEGORY, accountName, GoogleStoredTokenSchema);
           this.authData.set(accountName, stored);
 
           await this.syncAccountProfile(accountName);
-
         } catch (err) {
-          this.app.serviceError(this, `Couldn't load auth token for google account ${accountName} from the vault. Re-authenticate with /google account auth ${accountName} to re-authorize.`, err);
+          this.app.serviceError(
+            this,
+            `Couldn't load auth token for google account ${accountName} from the vault. Re-authenticate with /google account auth ${accountName} to re-authorize.`,
+            err,
+          );
         }
       }
     });
@@ -115,8 +115,8 @@ export default class GoogleService implements TokenRingService {
     return {
       isAuthenticated: Boolean(auth?.refreshToken && auth?.accessToken),
       profile: auth?.profile,
-      account
-    }
+      account,
+    };
   }
 
   requireAuthorizedAccount(accountName: string) {
@@ -132,7 +132,7 @@ export default class GoogleService implements TokenRingService {
     redirectUri: string,
     options: {
       state?: string;
-      scopes?: string[];
+      scopes?: string[] | undefined;
       accessType?: "offline" | "online";
       prompt?: "consent" | "none" | "select_account";
       loginHint?: string;
@@ -140,13 +140,15 @@ export default class GoogleService implements TokenRingService {
   ): string {
     const account = this.requireAccount(accountName);
     const oauthClient = this.createOAuthClient(accountName, redirectUri);
-    return oauthClient.generateAuthUrl({
-      access_type: options.accessType ?? "offline",
-      prompt: options.prompt ?? "consent",
-      scope: options.scopes ?? this.getDefaultScopes(account),
-      state: options.state,
-      login_hint: options.loginHint ?? account.email,
-    });
+    return oauthClient.generateAuthUrl(
+      stripUndefinedKeys({
+        access_type: options.accessType ?? "offline",
+        prompt: options.prompt ?? "consent",
+        scope: options.scopes ?? this.getDefaultScopes(account),
+        state: options.state,
+        login_hint: options.loginHint ?? account.email,
+      }),
+    );
   }
 
   beginAuthorization(
@@ -168,8 +170,8 @@ export default class GoogleService implements TokenRingService {
       this.pendingAuthorizations.set(state, {
         accountName,
         redirectUri,
-        resolve: (callbackUrl) => complete(() => resolve(callbackUrl)),
-        reject: (error) => complete(() => reject(error)),
+        resolve: callbackUrl => complete(() => resolve(callbackUrl)),
+        reject: error => complete(() => reject(error)),
       });
     });
 
@@ -185,24 +187,16 @@ export default class GoogleService implements TokenRingService {
     const callback = new URL(callbackUrl);
     const state = callback.searchParams.get("state");
     if (!state) {
-      throw new Error(
-        "The Google OAuth callback is missing its state parameter.",
-      );
+      throw new Error("The Google OAuth callback is missing its state parameter.");
     }
 
     const pending = this.pendingAuthorizations.get(state);
     if (!pending) {
-      throw new Error(
-        "No pending Google authorization was found for this callback.",
-      );
+      throw new Error("No pending Google authorization was found for this callback.");
     }
 
     if (`${callback.origin}${callback.pathname}` !== pending.redirectUri) {
-      pending.reject(
-        new Error(
-          "The Google OAuth callback redirect URI did not match the pending authorization request.",
-        ),
-      );
+      pending.reject(new Error("The Google OAuth callback redirect URI did not match the pending authorization request."));
       return;
     }
 
@@ -213,85 +207,46 @@ export default class GoogleService implements TokenRingService {
     }
 
     if (!callback.searchParams.get("code")) {
-      pending.reject(
-        new Error(
-          "The Google OAuth callback did not include an authorization code.",
-        ),
-      );
+      pending.reject(new Error("The Google OAuth callback did not include an authorization code."));
       return;
     }
 
     pending.resolve(callbackUrl);
   }
 
-  async exchangeAuthorizationCode(
-    name: string,
-    code: string,
-    redirectUri: string,
-  ) {
+  async exchangeAuthorizationCode(name: string, code: string, redirectUri: string) {
     const oauthClient = this.createOAuthClient(name, redirectUri);
 
     try {
-      const {tokens} = await oauthClient.getToken(code);
+      const { tokens } = await oauthClient.getToken(code);
       await this.storeOAuthCredentials(name, tokens);
       oauthClient.setCredentials(this.getOAuthCredentials(name));
     } catch (error: unknown) {
-      throw this.createRequestFailure(
-        `exchange Google auth code for ${name}`,
-        error,
-      );
+      throw this.createRequestFailure(`exchange Google auth code for ${name}`, error);
     }
 
     await this.syncAccountProfile(name);
     await this.tryStoreAuthDataInVault(name);
-    return this.getAccountStatus(name)
+    return this.getAccountStatus(name);
   }
 
-  async withGmail<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (gmail: gmail_v1.Gmail) => Promise<T>,
-  ): Promise<T> {
-    return await this.runGoogleRequest(accountName, request, async (auth) =>
-      await operation(google.gmail({version: "v1", auth})),
-    );
+  async withGmail<T>(accountName: string, request: GoogleRequestOptions, operation: (gmail: gmail_v1.Gmail) => Promise<T>): Promise<T> {
+    return await this.runGoogleRequest(accountName, request, async auth => await operation(google.gmail({ version: "v1", auth })));
   }
 
-  async withCalendar<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (calendar: calendar_v3.Calendar) => Promise<T>,
-  ): Promise<T> {
-    return await this.runGoogleRequest(accountName, request, async (auth) =>
-      await operation(google.calendar({version: "v3", auth})),
-    );
+  async withCalendar<T>(accountName: string, request: GoogleRequestOptions, operation: (calendar: calendar_v3.Calendar) => Promise<T>): Promise<T> {
+    return await this.runGoogleRequest(accountName, request, async auth => await operation(google.calendar({ version: "v3", auth })));
   }
 
-  async withDrive<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (drive: drive_v3.Drive) => Promise<T>,
-  ): Promise<T> {
-    return await this.runGoogleRequest(accountName, request, async (auth) =>
-      await operation(google.drive({version: "v3", auth})),
-    );
+  async withDrive<T>(accountName: string, request: GoogleRequestOptions, operation: (drive: drive_v3.Drive) => Promise<T>): Promise<T> {
+    return await this.runGoogleRequest(accountName, request, async auth => await operation(google.drive({ version: "v3", auth })));
   }
 
-  private async withOAuth2Api<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (oauth2: oauth2_v2.Oauth2) => Promise<T>,
-  ): Promise<T> {
-    return await this.runGoogleRequest(accountName, request, async (auth) =>
-      await operation(google.oauth2({version: "v2", auth})),
-    );
+  private async withOAuth2Api<T>(accountName: string, request: GoogleRequestOptions, operation: (oauth2: oauth2_v2.Oauth2) => Promise<T>): Promise<T> {
+    return await this.runGoogleRequest(accountName, request, async auth => await operation(google.oauth2({ version: "v2", auth })));
   }
 
-  private async runGoogleRequest<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (auth: Auth.OAuth2Client) => Promise<T>,
-  ): Promise<T> {
+  private async runGoogleRequest<T>(accountName: string, request: GoogleRequestOptions, operation: (auth: Auth.OAuth2Client) => Promise<T>): Promise<T> {
     const auth = this.createOAuthClient(accountName);
 
     try {
@@ -301,17 +256,10 @@ export default class GoogleService implements TokenRingService {
     }
   }
 
-  private createOAuthClient(
-    accountName: string,
-    redirectUri?: string,
-  ): Auth.OAuth2Client {
-    const oauthClient = new google.auth.OAuth2(
-      this.options.clientId,
-      this.options.clientSecret,
-      redirectUri,
-    );
+  private createOAuthClient(accountName: string, redirectUri?: string): Auth.OAuth2Client {
+    const oauthClient = new google.auth.OAuth2(this.options.clientId, this.options.clientSecret, redirectUri);
     oauthClient.setCredentials(this.getOAuthCredentials(accountName));
-    oauthClient.on("tokens", (tokens) => {
+    oauthClient.on("tokens", tokens => {
       void this.storeOAuthCredentials(accountName, tokens);
     });
     return oauthClient;
@@ -319,19 +267,16 @@ export default class GoogleService implements TokenRingService {
 
   private getOAuthCredentials(accountName: string): GoogleOAuthCredentials {
     const auth = this.authData.get(accountName);
-    return {
+    return stripUndefinedKeys({
       access_token: auth?.accessToken,
       expiry_date: auth?.expiryDate,
       refresh_token: auth?.refreshToken,
       scope: auth?.grantedScopes?.join(" "),
-    };
+    });
   }
 
-  private async storeOAuthCredentials(
-    accountName: string,
-    tokens: GoogleOAuthTokenUpdate,
-  ) {
-    const newAuth = {...this.authData.get(accountName)};
+  private async storeOAuthCredentials(accountName: string, tokens: GoogleOAuthTokenUpdate) {
+    const newAuth = { ...this.authData.get(accountName) };
 
     if (tokens.access_token) newAuth.accessToken = tokens.access_token;
     if (typeof tokens.expiry_date === "number") {
@@ -349,11 +294,7 @@ export default class GoogleService implements TokenRingService {
   private async tryStoreAuthDataInVault(accountName: string) {
     if (!this.vaultService) return;
     const authData = this.authData.get(accountName);
-    await this.vaultService.setJsonItem(
-      GOOGLE_VAULT_CATEGORY,
-      accountName,
-      authData
-    );
+    await this.vaultService.setJsonItem(GOOGLE_VAULT_CATEGORY, accountName, authData);
   }
 
   private getDefaultScopes(account: RuntimeGoogleAccount): string[] {
@@ -373,20 +314,13 @@ export default class GoogleService implements TokenRingService {
   }
 
   private createRequestFailure(context: string, error: unknown): Error {
-    const message =
-      error instanceof Error && error.message
-        ? `${context} failed: ${error.message}`
-        : `${context} failed`;
+    const message = error instanceof Error && error.message ? `${context} failed: ${error.message}` : `${context} failed`;
     const requestError = new Error(message);
     (requestError as Error & { cause?: unknown }).cause = error;
     return requestError;
   }
 
-  private normalizeGoogleRequestError(
-    accountName: string,
-    request: GoogleRequestOptions,
-    error: unknown,
-  ): Error {
+  private normalizeGoogleRequestError(accountName: string, request: GoogleRequestOptions, error: unknown): Error {
     const failure = this.extractGoogleRequestFailure(error);
     if (!failure) return this.createRequestFailure(request.context, error);
 
@@ -401,34 +335,34 @@ export default class GoogleService implements TokenRingService {
     );
   }
 
-  private extractGoogleRequestFailure(error: unknown): {
-    details: unknown;
-    method?: string;
-    status: number;
-    url?: string;
-  } | undefined {
+  private extractGoogleRequestFailure(error: unknown):
+    | {
+        details: unknown;
+        method?: string;
+        status: number;
+        url?: string;
+      }
+    | undefined {
     if (!error || typeof error !== "object") return undefined;
 
     const response =
       "response" in error && error.response && typeof error.response === "object"
-        ? error.response as {
-          data?: unknown;
-          status?: number;
-        }
+        ? (error.response as {
+            data?: unknown;
+            status?: number;
+          })
         : undefined;
     if (typeof response?.status !== "number") return undefined;
 
     const config =
-      "config" in error && error.config && typeof error.config === "object"
-        ? error.config as { method?: string; url?: string }
-        : undefined;
+      "config" in error && error.config && typeof error.config === "object" ? (error.config as { method?: string; url?: string | undefined }) : undefined;
 
-    return {
+    return stripUndefinedKeys({
       details: response.data,
       method: config?.method?.toUpperCase(),
       status: response.status,
       url: config?.url,
-    };
+    });
   }
 
   private createGoogleApiError(
@@ -441,21 +375,11 @@ export default class GoogleService implements TokenRingService {
     requiredScopes?: string[],
   ): Error {
     const googleMessage = this.getGoogleApiErrorMessage(details);
-    const missingScopes = this.getMissingGrantedScopes(
-      accountName,
-      url,
-      method,
-      requiredScopes,
-    );
+    const missingScopes = this.getMissingGrantedScopes(accountName, url, method, requiredScopes);
 
     let message = `${context} failed (${status})`;
-    if (
-      status === 403 &&
-      (this.isInsufficientScopeError(details) || missingScopes.length > 0)
-    ) {
-      const scopeMessage = missingScopes.length
-        ? ` Missing scope${missingScopes.length === 1 ? "" : "s"}: ${missingScopes.join(", ")}.`
-        : "";
+    if (status === 403 && (this.isInsufficientScopeError(details) || missingScopes.length > 0)) {
+      const scopeMessage = missingScopes.length ? ` Missing scope${missingScopes.length === 1 ? "" : "s"}: ${missingScopes.join(", ")}.` : "";
       message = `${context} failed (${status}): Google account "${accountName}" is authenticated, but it is missing permission for this request.${scopeMessage} Re-run /google account auth ${accountName} to grant access.`;
     } else if (googleMessage) {
       message = `${context} failed (${status}): ${googleMessage}`;
@@ -473,46 +397,29 @@ export default class GoogleService implements TokenRingService {
     const googleError = (details as GoogleApiErrorResponse).error;
     if (!googleError) return undefined;
     if (googleError.message) return googleError.message;
-    return googleError.errors?.find((entry) => entry.message)?.message;
+    return googleError.errors?.find(entry => entry.message)?.message;
   }
 
   private isInsufficientScopeError(details: unknown): boolean {
     if (!details || typeof details !== "object") return false;
     const googleError = (details as GoogleApiErrorResponse).error;
     if (!googleError) return false;
-    if (
-      googleError.status === "PERMISSION_DENIED" &&
-      googleError.message?.toLowerCase().includes("scope")
-    ) {
+    if (googleError.status === "PERMISSION_DENIED" && googleError.message?.toLowerCase().includes("scope")) {
       return true;
     }
 
-    return [
-      ...(googleError.errors ?? []).map((entry) => entry.reason),
-      ...(googleError.details ?? []).map((entry) => entry.reason),
-    ].some(
-      (reason) =>
-        reason === "insufficientPermissions" ||
-        reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+    return [...(googleError.errors ?? []).map(entry => entry.reason), ...(googleError.details ?? []).map(entry => entry.reason)].some(
+      reason => reason === "insufficientPermissions" || reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
     );
   }
 
-  private getMissingGrantedScopes(
-    accountName: string,
-    url: string,
-    method?: string,
-    requiredScopes?: string[],
-  ): string[] {
-
-    const grantedScopes = new Set(
-      this.authData.get(accountName)?.grantedScopes ?? []
-    );
+  private getMissingGrantedScopes(accountName: string, url: string, method?: string, requiredScopes?: string[]): string[] {
+    const grantedScopes = new Set(this.authData.get(accountName)?.grantedScopes ?? []);
 
     if (grantedScopes.size === 0) return [];
 
-    const neededScopes =
-      requiredScopes ?? this.getRequiredScopesForRequest(url, method);
-    return neededScopes.filter((scope) => !grantedScopes.has(scope));
+    const neededScopes = requiredScopes ?? this.getRequiredScopesForRequest(url, method);
+    return neededScopes.filter(scope => !grantedScopes.has(scope));
   }
 
   private getRequiredScopesForRequest(url: string, method?: string): string[] {
@@ -523,16 +430,10 @@ export default class GoogleService implements TokenRingService {
       return [];
     }
 
-    if (
-      parsed.hostname === "www.googleapis.com" &&
-      parsed.pathname.startsWith("/calendar/")
-    ) {
+    if (parsed.hostname === "www.googleapis.com" && parsed.pathname.startsWith("/calendar/")) {
       return DEFAULT_CALENDAR_SCOPES;
     }
-    if (
-      parsed.hostname === "www.googleapis.com" &&
-      parsed.pathname.startsWith("/drive/")
-    ) {
+    if (parsed.hostname === "www.googleapis.com" && parsed.pathname.startsWith("/drive/")) {
       return DEFAULT_DRIVE_SCOPES;
     }
     if (parsed.hostname !== "gmail.googleapis.com") {
@@ -560,8 +461,8 @@ export default class GoogleService implements TokenRingService {
         context: `fetch Google profile for ${accountName}`,
         requiredScopes: [GOOGLE_USERINFO_SCOPE],
       },
-      async (oauth2) => {
-        const {data} = await oauth2.userinfo.get();
+      async oauth2 => {
+        const { data } = await oauth2.userinfo.get();
         return data;
       },
     );
@@ -569,7 +470,7 @@ export default class GoogleService implements TokenRingService {
 
     this.authData.set(accountName, {
       ...this.authData.get(accountName),
-      profile
-    })
+      profile,
+    });
   }
 }

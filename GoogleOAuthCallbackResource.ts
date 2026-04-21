@@ -1,6 +1,6 @@
-import type {BunRouter, WebResource} from "../web-host/types.ts";
+import type { BunRouter, WebResource } from "../web-host/types.ts";
 import type GoogleService from "./GoogleService.ts";
-import {GOOGLE_OAUTH_CALLBACK_PATH} from "./GoogleService.ts";
+import { GOOGLE_OAUTH_CALLBACK_PATH } from "./GoogleService.ts";
 
 function renderHtml(title: string, message: string): string {
   return `<!doctype html>
@@ -45,27 +45,15 @@ function renderHtml(title: string, message: string): string {
 }
 
 export default class GoogleOAuthCallbackResource implements WebResource {
-  constructor(private readonly googleService: GoogleService) {
-  }
+  constructor(private readonly googleService: GoogleService) {}
 
   register(router: BunRouter): Promise<void> {
     router.get(GOOGLE_OAUTH_CALLBACK_PATH, (request, response) => {
       try {
         this.googleService.completePendingAuthorization(request.url);
-        return response.html(
-          renderHtml(
-            "Google account connected",
-            "Authentication completed. You can close this tab and return to TokenRing.",
-          ),
-        );
+        return response.html(renderHtml("Google account connected", "Authentication completed. You can close this tab and return to TokenRing."));
       } catch (error: unknown) {
-        return response.html(
-          renderHtml(
-            "Google authentication failed",
-            (error as Error).message || "The callback could not be processed.",
-          ),
-          400,
-        );
+        return response.html(renderHtml("Google authentication failed", (error as Error).message || "The callback could not be processed."), 400);
       }
     });
     return Promise.resolve();

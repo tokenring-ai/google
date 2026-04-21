@@ -1,21 +1,22 @@
-import type {DirectoryTreeOptions, FileSystemProvider, GrepOptions, GrepResult, StatLike, WatchOptions} from "@tokenring-ai/filesystem/FileSystemProvider";
-import type {z} from "zod";
+import type { DirectoryTreeOptions, FileSystemProvider, GrepOptions, GrepResult, StatLike, WatchOptions } from "@tokenring-ai/filesystem/FileSystemProvider";
+import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
+import type { z } from "zod";
 import type GoogleService from "./GoogleService.ts";
-import type {GoogleDriveFileSystemProviderOptionsSchema} from "./schema.ts";
+import type { GoogleDriveFileSystemProviderOptionsSchema } from "./schema.ts";
 
 type DriveFile = {
   id: string;
   name: string;
   mimeType: string;
-  parents?: string[];
-  size?: string;
-  createdTime?: string;
-  modifiedTime?: string;
+  parents?: string[] | undefined;
+  size?: string | undefined;
+  createdTime?: string | undefined;
+  modifiedTime?: string | undefined;
 };
 
 type DriveListResponse = {
   files?: DriveFile[];
-  nextPageToken?: string;
+  nextPageToken?: string | undefined;
 };
 
 type ResolvedPath = {
@@ -28,8 +29,7 @@ type ResolvedPath = {
 const DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder";
 const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 
-export default class GoogleDriveFileSystemProvider
-  implements FileSystemProvider {
+export default class GoogleDriveFileSystemProvider implements FileSystemProvider {
   readonly name = "GoogleDriveFileSystemProvider";
   description: string;
 
@@ -38,9 +38,7 @@ export default class GoogleDriveFileSystemProvider
   private readonly idCache = new Map<string, DriveFile | ResolvedPath>();
 
   constructor(
-    readonly options: z.output<
-      typeof GoogleDriveFileSystemProviderOptionsSchema
-    >,
+    readonly options: z.output<typeof GoogleDriveFileSystemProviderOptionsSchema>,
     private readonly googleService: GoogleService,
   ) {
     this.description = options.description;
@@ -48,10 +46,7 @@ export default class GoogleDriveFileSystemProvider
     this.rootFolderId = options.rootFolderId;
   }
 
-  async writeFile(
-    filePath: string,
-    content: string | Buffer,
-  ): Promise<boolean> {
+  async writeFile(filePath: string, content: string | Buffer): Promise<boolean> {
     const components = this.pathToComponents(filePath);
     const fileName = components.pop();
     if (!fileName) {
@@ -59,16 +54,10 @@ export default class GoogleDriveFileSystemProvider
     }
     const parentPath = components.join("/");
     const parentResolved = await this.resolvePathToId(parentPath, true);
-    if (
-      !parentResolved.item ||
-      !parentResolved.fileId ||
-      parentResolved.item.mimeType !== DRIVE_FOLDER_MIME
-    ) {
-      throw new Error(
-        `Parent path ${parentPath} is not a folder or could not be created.`,
-      );
+    if (!parentResolved.item || !parentResolved.fileId || parentResolved.item.mimeType !== DRIVE_FOLDER_MIME) {
+      throw new Error(`Parent path ${parentPath} is not a folder or could not be created.`);
     }
-    const {fileId: parentFileId} = parentResolved;
+    const { fileId: parentFileId } = parentResolved;
 
     const existingFile = await this.findFileOrFolder(fileName, parentFileId);
     if (existingFile?.mimeType === DRIVE_FOLDER_MIME) {
@@ -80,17 +69,10 @@ export default class GoogleDriveFileSystemProvider
     return true;
   }
 
-  async appendFile(
-    filePath: string,
-    finalContent: string | Buffer,
-  ): Promise<boolean> {
+  async appendFile(filePath: string, finalContent: string | Buffer): Promise<boolean> {
     const existing = await this.readFile(filePath);
-    const appendBuffer = Buffer.isBuffer(finalContent)
-      ? finalContent
-      : Buffer.from(finalContent, "utf8");
-    const nextContent = existing
-      ? Buffer.concat([existing, appendBuffer])
-      : appendBuffer;
+    const appendBuffer = Buffer.isBuffer(finalContent) ? finalContent : Buffer.from(finalContent, "utf8");
+    const nextContent = existing ? Buffer.concat([existing, appendBuffer]) : appendBuffer;
     return await this.writeFile(filePath, nextContent);
   }
 
@@ -107,7 +89,7 @@ export default class GoogleDriveFileSystemProvider
         method: "DELETE",
         requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      async (drive) => {
+      async drive => {
         await drive.files.delete({
           fileId: resolved.fileId!,
           supportsAllDrives: true,
@@ -131,14 +113,14 @@ export default class GoogleDriveFileSystemProvider
         method: "GET",
         requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      async (drive) => {
+      async drive => {
         const response = await drive.files.get(
           {
             alt: "media",
             fileId: resolved.item!.id,
             supportsAllDrives: true,
           },
-          {responseType: "arraybuffer"},
+          { responseType: "arraybuffer" },
         );
 
         return this.toBuffer(response.data);
@@ -158,30 +140,17 @@ export default class GoogleDriveFileSystemProvider
 
     const newParentPath = components.join("/");
     const resolvedNewParent = await this.resolvePathToId(newParentPath, true);
-    if (
-      !resolvedNewParent.item ||
-      resolvedNewParent.item.mimeType !== DRIVE_FOLDER_MIME
-    ) {
-      throw new Error(
-        `Destination parent path is not a folder or cannot be created: ${newParentPath}`,
-      );
+    if (!resolvedNewParent.item || resolvedNewParent.item.mimeType !== DRIVE_FOLDER_MIME) {
+      throw new Error(`Destination parent path is not a folder or cannot be created: ${newParentPath}`);
     }
 
     const oldParentId = resolvedOld.item.parents?.[0];
     let addParents: string | undefined;
     let removeParents: string | undefined;
-    if (
-      resolvedNewParent.fileId &&
-      oldParentId &&
-      oldParentId !== resolvedNewParent.fileId
-    ) {
+    if (resolvedNewParent.fileId && oldParentId && oldParentId !== resolvedNewParent.fileId) {
       addParents = resolvedNewParent.fileId;
       removeParents = oldParentId;
-    } else if (
-      resolvedNewParent.fileId &&
-      !oldParentId &&
-      resolvedNewParent.fileId !== this.rootFolderId
-    ) {
+    } else if (resolvedNewParent.fileId && !oldParentId && resolvedNewParent.fileId !== this.rootFolderId) {
       addParents = resolvedNewParent.fileId;
     }
 
@@ -192,15 +161,17 @@ export default class GoogleDriveFileSystemProvider
         method: "PATCH",
         requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      async (drive) => {
-        const {data} = await drive.files.update({
-          addParents,
-          fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
-          fileId: resolvedOld.item!.id,
-          removeParents,
-          requestBody: {name: newFileName},
-          supportsAllDrives: true,
-        });
+      async drive => {
+        const { data } = await drive.files.update(
+          stripUndefinedKeys({
+            addParents,
+            fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
+            fileId: resolvedOld.item!.id,
+            removeParents,
+            requestBody: { name: newFileName },
+            supportsAllDrives: true,
+          }),
+        );
         return data as DriveFile;
       },
     );
@@ -213,7 +184,7 @@ export default class GoogleDriveFileSystemProvider
     const normalizedPath = this.normalizePath(filePath);
     const resolved = await this.resolvePathToId(normalizedPath);
     if (!resolved.item) {
-      return {exists: false, path: normalizedPath};
+      return { exists: false, path: normalizedPath };
     }
 
     return {
@@ -222,46 +193,28 @@ export default class GoogleDriveFileSystemProvider
       isFile: resolved.item.mimeType !== DRIVE_FOLDER_MIME,
       isDirectory: resolved.item.mimeType === DRIVE_FOLDER_MIME,
       size: resolved.item.size ? Number.parseInt(resolved.item.size, 10) : 0,
-      created: resolved.item.createdTime
-        ? new Date(resolved.item.createdTime)
-        : undefined,
-      modified: resolved.item.modifiedTime
-        ? new Date(resolved.item.modifiedTime)
-        : undefined,
+      created: resolved.item.createdTime ? new Date(resolved.item.createdTime) : undefined,
+      modified: resolved.item.modifiedTime ? new Date(resolved.item.modifiedTime) : undefined,
     };
   }
 
-  async createDirectory(
-    dirPath: string,
-    options: { recursive?: boolean } = {},
-  ): Promise<boolean> {
+  async createDirectory(dirPath: string, options: { recursive?: boolean | undefined } = {}): Promise<boolean> {
     const components = this.pathToComponents(dirPath);
     if (components.length === 0) return true;
 
     const dirName = components.pop();
     if (!dirName) return true;
     const parentPath = components.join("/");
-    const resolvedParent = await this.resolvePathToId(
-      parentPath,
-      options.recursive ?? false,
-    );
-    if (
-      !resolvedParent.item ||
-      !resolvedParent.fileId ||
-      resolvedParent.item.mimeType !== DRIVE_FOLDER_MIME
-    ) {
-      throw new Error(
-        `Parent path is not a folder or does not exist: ${parentPath}`,
-      );
+    const resolvedParent = await this.resolvePathToId(parentPath, options.recursive ?? false);
+    if (!resolvedParent.item || !resolvedParent.fileId || resolvedParent.item.mimeType !== DRIVE_FOLDER_MIME) {
+      throw new Error(`Parent path is not a folder or does not exist: ${parentPath}`);
     }
-    const {fileId: parentFileId} = resolvedParent;
+    const { fileId: parentFileId } = resolvedParent;
 
     const existingItem = await this.findFileOrFolder(dirName, parentFileId);
     if (existingItem) {
       if (existingItem.mimeType === DRIVE_FOLDER_MIME) return true;
-      throw new Error(
-        `A file with the name '${dirName}' already exists in this location and is not a folder.`,
-      );
+      throw new Error(`A file with the name '${dirName}' already exists in this location and is not a folder.`);
     }
 
     await this.createFolder(dirName, parentFileId);
@@ -269,16 +222,9 @@ export default class GoogleDriveFileSystemProvider
     return true;
   }
 
-  async copy(
-    source: string,
-    destination: string,
-    options: { overwrite?: boolean } = {},
-  ): Promise<boolean> {
+  async copy(source: string, destination: string, options: { overwrite?: boolean | undefined } = {}): Promise<boolean> {
     const sourceResolved = await this.resolvePathToId(source);
-    if (
-      !sourceResolved.item ||
-      sourceResolved.item.mimeType === DRIVE_FOLDER_MIME
-    ) {
+    if (!sourceResolved.item || sourceResolved.item.mimeType === DRIVE_FOLDER_MIME) {
       throw new Error(`Source is not a file or does not exist: ${source}`);
     }
 
@@ -287,25 +233,14 @@ export default class GoogleDriveFileSystemProvider
     if (!destFileName) throw new Error("Destination path is required");
     const destParentPath = components.join("/");
     const destParentResolved = await this.resolvePathToId(destParentPath, true);
-    if (
-      !destParentResolved.item ||
-      !destParentResolved.fileId ||
-      destParentResolved.item.mimeType !== DRIVE_FOLDER_MIME
-    ) {
-      throw new Error(
-        `Destination parent path is not a folder or could not be created: ${destParentPath}`,
-      );
+    if (!destParentResolved.item || !destParentResolved.fileId || destParentResolved.item.mimeType !== DRIVE_FOLDER_MIME) {
+      throw new Error(`Destination parent path is not a folder or could not be created: ${destParentPath}`);
     }
-    const {fileId: destParentFileId} = destParentResolved;
+    const { fileId: destParentFileId } = destParentResolved;
 
-    const existingDestItem = await this.findFileOrFolder(
-      destFileName,
-      destParentFileId,
-    );
+    const existingDestItem = await this.findFileOrFolder(destFileName, destParentFileId);
     if (existingDestItem && !options.overwrite) {
-      throw new Error(
-        `Destination path already exists and overwrite is false: ${destination}`,
-      );
+      throw new Error(`Destination path already exists and overwrite is false: ${destination}`);
     }
     if (existingDestItem && options.overwrite) {
       await this.googleService.withDrive(
@@ -315,7 +250,7 @@ export default class GoogleDriveFileSystemProvider
           method: "DELETE",
           requiredScopes: [GOOGLE_DRIVE_SCOPE],
         },
-        async (drive) => {
+        async drive => {
           await drive.files.delete({
             fileId: existingDestItem.id,
             supportsAllDrives: true,
@@ -331,8 +266,8 @@ export default class GoogleDriveFileSystemProvider
         method: "POST",
         requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      async (drive) => {
-        const {data} = await drive.files.copy({
+      async drive => {
+        const { data } = await drive.files.copy({
           fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
           fileId: sourceResolved.item!.id,
           requestBody: {
@@ -350,24 +285,14 @@ export default class GoogleDriveFileSystemProvider
   }
 
   watch(_dir: string, _options?: WatchOptions) {
-    throw new Error(
-      "Method watch is not supported by GoogleDriveFileSystemProvider.",
-    );
+    throw new Error("Method watch is not supported by GoogleDriveFileSystemProvider.");
   }
 
-  grep(
-    _searchString: string | string[],
-    _options?: GrepOptions,
-  ): Promise<GrepResult[]> {
-    throw new Error(
-      "Method grep is not supported by GoogleDriveFileSystemProvider.",
-    );
+  grep(_searchString: string | string[], _options?: GrepOptions): Promise<GrepResult[]> {
+    throw new Error("Method grep is not supported by GoogleDriveFileSystemProvider.");
   }
 
-  async* getDirectoryTree(
-    path: string,
-    params?: DirectoryTreeOptions,
-  ): AsyncGenerator<string> {
+  async *getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string> {
     const normalizedPath = this.normalizePath(path);
     const ignoreFilter = params?.ignoreFilter ?? (() => false);
     const recursive = params?.recursive ?? true;
@@ -378,11 +303,8 @@ export default class GoogleDriveFileSystemProvider
 
     if (resolved.fileId) {
       for (const child of await this.listChildren(resolved.fileId)) {
-        const childPath = normalizedPath
-          ? `${normalizedPath}/${child.name}`
-          : child.name;
-        const yieldedPath =
-          child.mimeType === DRIVE_FOLDER_MIME ? `${childPath}/` : childPath;
+        const childPath = normalizedPath ? `${normalizedPath}/${child.name}` : child.name;
+        const yieldedPath = child.mimeType === DRIVE_FOLDER_MIME ? `${childPath}/` : childPath;
         if (ignoreFilter(yieldedPath)) continue;
         yield yieldedPath;
         if (recursive && child.mimeType === DRIVE_FOLDER_MIME) {
@@ -408,14 +330,10 @@ export default class GoogleDriveFileSystemProvider
     return filePath
       .replace(/^\/+|\/+$/g, "")
       .split("/")
-      .filter((part) => part && part !== ".");
+      .filter(part => part && part !== ".");
   }
 
-  private async findFileOrFolder(
-    name: string,
-    parentId: string,
-    mimeType?: string,
-  ): Promise<DriveFile | null> {
+  private async findFileOrFolder(name: string, parentId: string, mimeType?: string): Promise<DriveFile | null> {
     const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     let query = `name='${escapedName}' and '${parentId}' in parents and trashed=false`;
     if (mimeType) query += ` and mimeType='${mimeType}'`;
@@ -427,8 +345,8 @@ export default class GoogleDriveFileSystemProvider
         method: "GET",
         requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      async (drive) => {
-        const {data} = await drive.files.list({
+      async drive => {
+        const { data } = await drive.files.list({
           fields: "files(id,name,mimeType,parents,size,createdTime,modifiedTime)",
           includeItemsFromAllDrives: true,
           pageSize: 1,
@@ -454,16 +372,17 @@ export default class GoogleDriveFileSystemProvider
           method: "GET",
           requiredScopes: [GOOGLE_DRIVE_SCOPE],
         },
-        async (drive) => {
-          const {data} = await drive.files.list({
-            fields:
-              "nextPageToken,files(id,name,mimeType,parents,size,createdTime,modifiedTime)",
-            includeItemsFromAllDrives: true,
-            pageSize: 200,
-            pageToken,
-            q: `'${parentId}' in parents and trashed=false`,
-            supportsAllDrives: true,
-          });
+        async drive => {
+          const { data } = await drive.files.list(
+            stripUndefinedKeys({
+              fields: "nextPageToken,files(id,name,mimeType,parents,size,createdTime,modifiedTime)",
+              includeItemsFromAllDrives: true,
+              pageSize: 200,
+              pageToken,
+              q: `'${parentId}' in parents and trashed=false`,
+              supportsAllDrives: true,
+            }),
+          );
           return data as DriveListResponse;
         },
       );
@@ -475,10 +394,7 @@ export default class GoogleDriveFileSystemProvider
     return files;
   }
 
-  private async resolvePathToId(
-    filePath: string,
-    createMissingFolders = false,
-  ): Promise<ResolvedPath> {
+  private async resolvePathToId(filePath: string, createMissingFolders = false): Promise<ResolvedPath> {
     const normalizedPath = this.normalizePath(filePath);
     const fullPathKey = `path:${normalizedPath}`;
     const cached = this.idCache.get(fullPathKey);
@@ -511,11 +427,7 @@ export default class GoogleDriveFileSystemProvider
       if (cachedItem && "id" in cachedItem) {
         currentItem = cachedItem;
       } else {
-        currentItem = await this.findFileOrFolder(
-          component,
-          currentParentId,
-          isLastComponent ? undefined : DRIVE_FOLDER_MIME,
-        );
+        currentItem = await this.findFileOrFolder(component, currentParentId, isLastComponent ? undefined : DRIVE_FOLDER_MIME);
         if (currentItem) this.idCache.set(componentKey, currentItem);
       }
 
@@ -556,10 +468,7 @@ export default class GoogleDriveFileSystemProvider
     return resolved;
   }
 
-  private async createFolder(
-    name: string,
-    parentId: string,
-  ): Promise<DriveFile> {
+  private async createFolder(name: string, parentId: string): Promise<DriveFile> {
     return await this.googleService.withDrive<DriveFile>(
       this.account,
       {
@@ -567,8 +476,8 @@ export default class GoogleDriveFileSystemProvider
         method: "POST",
         requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      async (drive) => {
-        const {data} = await drive.files.create({
+      async drive => {
+        const { data } = await drive.files.create({
           fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
           requestBody: {
             mimeType: DRIVE_FOLDER_MIME,
@@ -582,33 +491,24 @@ export default class GoogleDriveFileSystemProvider
     );
   }
 
-  private async uploadFile(
-    parentId: string,
-    fileName: string,
-    content: string | Buffer,
-    existingFileId?: string,
-  ): Promise<DriveFile> {
-    const fileBuffer = Buffer.isBuffer(content)
-      ? content
-      : Buffer.from(content, "utf8");
+  private async uploadFile(parentId: string, fileName: string, content: string | Buffer, existingFileId?: string): Promise<DriveFile> {
+    const fileBuffer = Buffer.isBuffer(content) ? content : Buffer.from(content, "utf8");
 
     return await this.googleService.withDrive<DriveFile>(
       this.account,
       {
-        context: existingFileId
-          ? "update Google Drive file"
-          : "create Google Drive file",
+        context: existingFileId ? "update Google Drive file" : "create Google Drive file",
         method: existingFileId ? "PATCH" : "POST",
         requiredScopes: [GOOGLE_DRIVE_SCOPE],
       },
-      async (drive) => {
+      async drive => {
         const requestBody = {
           name: fileName,
           parents: [parentId],
         };
 
         if (existingFileId) {
-          const {data} = await drive.files.update({
+          const { data } = await drive.files.update({
             fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
             fileId: existingFileId,
             media: {
@@ -621,7 +521,7 @@ export default class GoogleDriveFileSystemProvider
           return data as DriveFile;
         }
 
-        const {data} = await drive.files.create({
+        const { data } = await drive.files.create({
           fields: "id,name,mimeType,parents,size,createdTime,modifiedTime",
           media: {
             body: fileBuffer,

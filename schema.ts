@@ -1,4 +1,4 @@
-import {z} from "zod";
+import { z } from "zod";
 
 export const GoogleAccountGmailSchema = z.object({
   description: z.string().default("Gmail"),
@@ -22,30 +22,30 @@ export const GoogleAccountSchema = z.object({
 });
 
 export const GoogleStoredTokenSchema = z.object({
-  refreshToken: z.string().optional(),
-  accessToken: z.string().optional(),
-  expiryDate: z.number().optional(),
-  grantedScopes: z.array(z.string()).optional(),
+  refreshToken: z.string().exactOptional(),
+  accessToken: z.string().exactOptional(),
+  expiryDate: z.number().exactOptional(),
+  grantedScopes: z.array(z.string()).exactOptional(),
   profile: z
     .object({
-      email: z.string().nullable().optional(),
-      family_name: z.string().nullable().optional(),
-      gender: z.string().nullable().optional(),
-      given_name: z.string().nullable().optional(),
-      hd: z.string().nullable().optional(),
-      id: z.string().nullable().optional(),
-      link: z.string().nullable().optional(),
-      locale: z.string().nullable().optional(),
-      name: z.string().nullable().optional(),
-      picture: z.string().nullable().optional(),
-      verified_email: z.boolean().nullable().optional(),
+      email: z.string().nullable().exactOptional(),
+      family_name: z.string().nullable().exactOptional(),
+      gender: z.string().nullable().exactOptional(),
+      given_name: z.string().nullable().exactOptional(),
+      hd: z.string().nullable().exactOptional(),
+      id: z.string().nullable().exactOptional(),
+      link: z.string().nullable().exactOptional(),
+      locale: z.string().nullable().exactOptional(),
+      name: z.string().nullable().exactOptional(),
+      picture: z.string().nullable().exactOptional(),
+      verified_email: z.boolean().nullable().exactOptional(),
     })
-    .optional(),
+    .exactOptional(),
 });
 
 export const GoogleAgentOptionsSchema = z
   .object({
-    account: z.string().optional(),
+    account: z.string().exactOptional(),
   })
   .default({});
 
@@ -76,15 +76,9 @@ export const GoogleDriveFileSystemProviderOptionsSchema = z.object({
 export type GoogleConfig = z.input<typeof GoogleConfigSchema>;
 export type GoogleAccount = z.input<typeof GoogleAccountSchema>;
 export type GoogleStoredToken = z.input<typeof GoogleStoredTokenSchema>;
-export type GmailEmailProviderOptions = z.input<
-  typeof GmailEmailProviderOptionsSchema
->;
-export type GoogleCalendarProviderOptions = z.input<
-  typeof GoogleCalendarProviderOptionsSchema
->;
-export type GoogleDriveFileSystemProviderOptions = z.input<
-  typeof GoogleDriveFileSystemProviderOptionsSchema
->;
+export type GmailEmailProviderOptions = z.input<typeof GmailEmailProviderOptionsSchema>;
+export type GoogleCalendarProviderOptions = z.input<typeof GoogleCalendarProviderOptionsSchema>;
+export type GoogleDriveFileSystemProviderOptions = z.input<typeof GoogleDriveFileSystemProviderOptionsSchema>;
 export type GoogleAccountEmail = z.input<typeof GoogleAccountGmailSchema>;
 export type GoogleAccountCalendar = z.input<typeof GoogleAccountCalendarSchema>;
 export type GoogleAccountDrive = z.input<typeof GoogleAccountDriveSchema>;

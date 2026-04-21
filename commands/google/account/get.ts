@@ -1,5 +1,5 @@
-import {CommandFailedError} from "@tokenring-ai/agent/AgentError";
-import type {AgentCommandInputSchema, AgentCommandInputType, TokenRingAgentCommand} from "@tokenring-ai/agent/types";
+import { CommandFailedError } from "@tokenring-ai/agent/AgentError";
+import type { AgentCommandInputSchema, AgentCommandInputType, TokenRingAgentCommand } from "@tokenring-ai/agent/types";
 import GoogleService from "../../../GoogleService.ts";
 
 const inputSchema = {
@@ -17,17 +17,12 @@ export default {
   name: "google account get",
   description: "Show a Google account",
   inputSchema,
-  execute: ({
-                    agent,
-                    positionals,
-                  }: AgentCommandInputType<typeof inputSchema>) => {
+  execute: ({ agent, positionals }: AgentCommandInputType<typeof inputSchema>) => {
     const googleService = agent.requireServiceByType(GoogleService);
     const accountName = positionals.name;
-    if (!accountName)
-      throw new CommandFailedError("Usage: /google account get <accountName>");
+    if (!accountName) throw new CommandFailedError("Usage: /google account get <accountName>");
 
-    const {isAuthenticated, account, profile} = googleService.getAccountStatus(accountName);
-
+    const { isAuthenticated, account, profile } = googleService.getAccountStatus(accountName);
 
     return [
       `Account: ${accountName} (${account.email})`,
