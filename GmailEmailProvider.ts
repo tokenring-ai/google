@@ -135,7 +135,7 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   async updateDraft(data: EmailDraft): Promise<EmailDraft> {
-    const raw = this.encodeBase64Url(await this.buildMimeMessage(data));
+    const raw = this.encodeBase64Url(this.buildMimeMessage(data));
     const response = await this.googleService.withGmail<GmailDraftResponse>(
       this.account,
       {
