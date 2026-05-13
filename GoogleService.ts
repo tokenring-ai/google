@@ -74,12 +74,10 @@ export default class GoogleService implements TokenRingService {
   description = "Google OAuth account and API access service";
 
   private readonly accounts = new KeyedRegistry<RuntimeGoogleAccount>();
-  private readonly authData = new Map<string, StoredGoogleToken>();
-  private readonly pendingAuthorizations = new Map<string, PendingAuthorization>();
-
   getAvailableAccounts = this.accounts.keysArray;
   requireAccount = this.accounts.require;
-
+  private readonly authData = new Map<string, StoredGoogleToken>();
+  private readonly pendingAuthorizations = new Map<string, PendingAuthorization>();
   private vaultService: VaultService | null = null;
 
   constructor(

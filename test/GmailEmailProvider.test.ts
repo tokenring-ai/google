@@ -1,4 +1,4 @@
-import {beforeEach, describe, expect, it, vi} from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import GmailEmailProvider from "../GmailEmailProvider.ts";
 
 function encodeBase64Url(value: string): string {
@@ -17,7 +17,7 @@ describe("GmailEmailProvider", () => {
   };
   let gmailApi: {
     users: {
-      labels: {list: ReturnType<typeof vi.fn>};
+      labels: { list: ReturnType<typeof vi.fn> };
       messages: {
         get: ReturnType<typeof vi.fn>;
         list: ReturnType<typeof vi.fn>;
@@ -60,16 +60,16 @@ describe("GmailEmailProvider", () => {
     gmailApi.users.labels.list.mockResolvedValueOnce({
       data: {
         labels: [
-          {id: "INBOX", name: "INBOX", type: "system"},
-          {id: "STARRED", name: "STARRED", type: "system"},
-          {id: "SENT", name: "SENT", type: "system"},
+          { id: "INBOX", name: "INBOX", type: "system" },
+          { id: "STARRED", name: "STARRED", type: "system" },
+          { id: "SENT", name: "SENT", type: "system" },
         ],
       },
     });
 
     await expect(provider.listBoxes()).resolves.toEqual([
-      {id: "inbox", name: "Inbox"},
-      {id: "sent", name: "Sent"},
+      { id: "inbox", name: "Inbox" },
+      { id: "sent", name: "Sent" },
     ]);
   });
 
@@ -81,7 +81,7 @@ describe("GmailEmailProvider", () => {
 
       return {
         data: {
-          messages: [{id: "message-1", threadId: "thread-1"}],
+          messages: [{ id: "message-1", threadId: "thread-1" }],
           nextPageToken: "page-2",
         },
       };
@@ -95,10 +95,10 @@ describe("GmailEmailProvider", () => {
         payload: {
           mimeType: "text/plain",
           headers: [
-            {name: "Subject", value: "Status update"},
-            {name: "From", value: "Alice <alice@example.com>"},
-            {name: "To", value: "Bob <bob@example.com>"},
-            {name: "Date", value: "Tue, 14 Nov 2023 12:00:00 +0000"},
+            { name: "Subject", value: "Status update" },
+            { name: "From", value: "Alice <alice@example.com>" },
+            { name: "To", value: "Bob <bob@example.com>" },
+            { name: "Date", value: "Tue, 14 Nov 2023 12:00:00 +0000" },
           ],
           body: {
             data: encodeBase64Url("Latest status"),

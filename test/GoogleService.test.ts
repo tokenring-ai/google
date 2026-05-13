@@ -1,14 +1,14 @@
 import createTestingAgent from "@tokenring-ai/agent/test/createTestingAgent";
 import createTestingApp from "@tokenring-ai/app/test/createTestingApp";
-import {mkdtemp, rm} from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
-import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
-import {AgentEventState} from "../../agent/state/agentEventState.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentEventState } from "../../agent/state/agentEventState.ts";
 import VaultService from "../../vault/VaultService.ts";
-import {WebHostService} from "../../web-host/index.ts";
+import { WebHostService } from "../../web-host/index.ts";
 import googleAuthCommand from "../commands/google/account/auth.ts";
 import GoogleService from "../GoogleService.ts";
-import {GoogleConfigSchema} from "../schema.ts";
+import { GoogleConfigSchema } from "../schema.ts";
 
 describe("GoogleService", () => {
   let tempDir: string;
@@ -20,7 +20,7 @@ describe("GoogleService", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-    await rm(tempDir, {recursive: true, force: true});
+    await rm(tempDir, { recursive: true, force: true });
   });
 
   it("includes Drive OAuth scope when Drive is configured", () => {
@@ -80,7 +80,8 @@ describe("GoogleService", () => {
 
     app.addServices(vault, webHost, service);
     await webHost.start(new AbortController().signal);
-    vi.spyOn(agent, "chatOutput").mockImplementation(() => {});
+    vi.spyOn(agent, "chatOutput").mockImplementation(() => {
+    });
 
     agent.mutateState(AgentEventState, (state) => {
       state.currentlyExecutingInputItem = {
@@ -88,7 +89,7 @@ describe("GoogleService", () => {
           type: "input.received",
           requestId: "test-request",
           timestamp: Date.now(),
-          input: {from: "test", message: "/google account auth primary"},
+          input: { from: "test", message: "/google account auth primary" },
         },
         executionState: {
           status: "running",
@@ -136,10 +137,10 @@ describe("GoogleService", () => {
         name: "primary",
       },
     });
-    const stored = await vault.getJsonItem<{userEmail?: string; refreshToken?: string; accessToken?: string; expiryDate?: number}>("google", "primary");
+    const stored = await vault.getJsonItem<{ userEmail?: string; refreshToken?: string; accessToken?: string; expiryDate?: number }>("google", "primary");
 
     expect(beginAuthorization).toHaveBeenCalledWith("primary", "http://127.0.0.1:3000/oauth/google/callback");
-    expect(result).toContain('tokens were saved to the vault');
+    expect(result).toContain("tokens were saved to the vault");
     expect(result).toContain("me@example.com");
     expect(stored).toMatchObject({
       userEmail: "me@example.com",
@@ -192,10 +193,10 @@ describe("GoogleService", () => {
     await expect(service.fetchGoogleRaw(
       "primary",
       "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-      {method: "GET"},
+      { method: "GET" },
       "list Google Calendar events",
     )).rejects.toThrow(
-      'list Google Calendar events failed (403): Google account "primary" is authenticated, but it is missing permission for this request. Missing scope: https://www.googleapis.com/auth/calendar. Re-run /google account auth primary to grant access.',
+      "list Google Calendar events failed (403): Google account \"primary\" is authenticated, but it is missing permission for this request. Missing scope: https://www.googleapis.com/auth/calendar. Re-run /google account auth primary to grant access.",
     );
   });
 });
