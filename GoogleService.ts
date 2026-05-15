@@ -312,7 +312,7 @@ export default class GoogleService implements TokenRingService {
   }
 
   private createRequestFailure(context: string, error: unknown): Error {
-    const message = error instanceof Error && error.message ? `${context} failed: ${error.message}` : `${context} failed`;
+    const message = Error.isError(error) && error.message ? `${context} failed: ${error.message}` : `${context} failed`;
     const requestError = new Error(message);
     (requestError as Error & { cause?: unknown }).cause = error;
     return requestError;

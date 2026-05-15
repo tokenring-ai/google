@@ -2,8 +2,7 @@
 
 ## Overview
 
-`@tokenring-ai/google` provides Google OAuth account management plus concrete Google-backed providers for other abstract
-Token Ring packages.
+`@tokenring-ai/google` provides Google OAuth account management plus concrete Google-backed providers for other abstract Token Ring packages.
 
 Current integrations:
 
@@ -12,8 +11,7 @@ Current integrations:
 - `GoogleCalendarProvider` for `@tokenring-ai/calendar`
 - `GoogleDriveFileSystemProvider` for `@tokenring-ai/filesystem`
 
-The package follows the same extension pattern as other provider packages in the repository: it does not replace the
-abstract services, it registers concrete providers into them.
+The package follows the same extension pattern as other provider packages in the repository: it does not replace the abstract services, it registers concrete providers into them.
 
 ## Installation
 
@@ -36,6 +34,7 @@ import GooglePlugin from "@tokenring-ai/google/plugin";
 - Gmail provider registration for the email package
 - Google Calendar provider registration for the calendar package
 - Google Drive filesystem provider registration for the filesystem package
+- OAuth callback handling via `WebHostService`
 
 ## Chat Commands
 
@@ -95,10 +94,11 @@ Authenticates a Google account using OAuth flow. Opens a URL for sign-in and wai
 This command:
 
 1. Generates an OAuth authorization URL
-2. Opens the URL for you to sign in to Google
-3. Listens for the OAuth callback
+2. Displays the URL for you to open in your browser
+3. Listens for the OAuth callback via `WebHostService`
 4. Exchanges the authorization code for tokens
 5. Stores the tokens in the vault
+6. Fetches and stores the user profile
 
 ## Core Components
 
@@ -108,102 +108,66 @@ Main service for Google OAuth and authenticated HTTP requests.
 
 **Implements:** `TokenRingService`
 
-**Methods:**
+**Constructor:**
 
 ```typescript
-class GoogleService implements TokenRingService {
-  readonly name: string;
-  readonly description: string;
-
-  constructor(app: TokenRingApp, options: GoogleConfig);
-
-  getAvailableAccounts(): string[];
-
-  getAccountStatus(accountName: string): {
-    isAuthenticated: boolean;
-    profile: UserInfo | undefined;
-    account: GoogleAccount;
-  };
-
-  requireAccount(accountName: string): GoogleAccount;
-
-  requireAuthorizedAccount(accountName: string): {
-    isAuthenticated: boolean;
-    profile: UserInfo | undefined;
-    account: GoogleAccount;
-  };
-
-  createAuthorizationUrl(
-    accountName: string,
-    redirectUri: string,
-    options?: {
-      state?: string;
-      scopes?: string[];
-      accessType?: "offline" | "online";
-      prompt?: "consent" | "none" | "select_account";
-      loginHint?: string;
-    }
-  ): string;
-
-  beginAuthorization(
-    accountName: string,
-    redirectUri: string
-  ): {
-    authorizationUrl: string;
-    waitForCallback: Promise<string>;
-  };
-
-  completePendingAuthorization(callbackUrl: string): void;
-
-  exchangeAuthorizationCode(
-    name: string,
-    code: string,
-    redirectUri: string
-  ): Promise<{
-    isAuthenticated: boolean;
-    profile: UserInfo | undefined;
-    account: GoogleAccount;
-  }>;
-
-  withGmail<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (gmail: gmail_v1.Gmail) => Promise<T>
-  ): Promise<T>;
-
-  withCalendar<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (calendar: calendar_v3.Calendar) => Promise<T>
-  ): Promise<T>;
-
-  withDrive<T>(
-    accountName: string,
-    request: GoogleRequestOptions,
-    operation: (drive: drive_v3.Drive) => Promise<T>
-  ): Promise<T>;
-}
+constructor(app: TokenRingApp, options: GoogleConfig)
 ```
 
-**Method Details:**
+**Properties:**
 
-- `getAvailableAccounts()`: Returns list of configured account names
-- `getAccountStatus(accountName)`: Returns authentication status, profile, and account configuration
-- `requireAccount(accountName)`: Returns the account configuration, throws if not found
-- `requireAuthorizedAccount(accountName)`: Returns account status, throws if not authenticated
-- `createAuthorizationUrl(accountName, redirectUri, options)`: Generates OAuth authorization URL
-- `beginAuthorization(accountName, redirectUri)`: Begins OAuth flow, returns URL and promise for callback
-- `completePendingAuthorization(callbackUrl)`: Processes the OAuth callback URL
-- `exchangeAuthorizationCode(name, code, redirectUri)`: Exchanges OAuth code for tokens
-- `withGmail(accountName, request, operation)`: Makes authenticated Gmail API requests
-- `withCalendar(accountName, request, operation)`: Makes authenticated Calendar API requests
-- `withDrive(accountName, request, operation)`: Makes authenticated Drive API requests
+| Property      | Type             | Description                          |
+|---------------|------------------|--------------------------------------|
+| `name`        | `string`         | Service name: "GoogleService"        |
+| `description` | `string`         | Service description                  |
+| `app`         | `TokenRingApp`   | Reference to the TokenRing app       |
+| `options`     | `GoogleConfig`   | Configured Google options            |
+
+**Methods:**
+
+- `getAvailableAccounts(): string[]` - Returns list of configured account names
+- `getAccountStatus(accountName: string): { isAuthenticated: boolean; profile: UserInfo | undefined; account: GoogleAccount }` - Returns authentication status, profile, and account configuration
+- `requireAccount(accountName: string): GoogleAccount` - Returns the account configuration, throws if not found
+- `requireAuthorizedAccount(accountName: string): { isAuthenticated: boolean; profile: UserInfo | undefined; account: GoogleAccount }` - Returns account status, throws if not authenticated
+- `createAuthorizationUrl(accountName: string, redirectUri: string, options?: { state?: string; scopes?: string[]; accessType?: "offline" | "online"; prompt?: "consent" | "none" | "select_account"; loginHint?: string }): string` - Generates OAuth authorization URL
+- `beginAuthorization(accountName: string, redirectUri: string): { authorizationUrl: string; waitForCallback: Promise<string> }` - Begins OAuth flow, returns URL and promise for callback
+- `completePendingAuthorization(callbackUrl: string): void` - Processes the OAuth callback URL
+- `exchangeAuthorizationCode(name: string, code: string, redirectUri: string): Promise<{ isAuthenticated: boolean; profile: UserInfo | undefined; account: GoogleAccount }>` - Exchanges OAuth code for tokens
+- `withGmail<T>(accountName: string, request: GoogleRequestOptions, operation: (gmail: gmail_v1.Gmail) => Promise<T>): Promise<T>` - Makes authenticated Gmail API requests
+- `withCalendar<T>(accountName: string, request: GoogleRequestOptions, operation: (calendar: calendar_v3.Calendar) => Promise<T>): Promise<T>` - Makes authenticated Calendar API requests
+- `withDrive<T>(accountName: string, request: GoogleRequestOptions, operation: (drive: drive_v3.Drive) => Promise<T>): Promise<T>` - Makes authenticated Drive API requests
+
+**OAuth Flow:**
+
+The `GoogleService` manages the complete OAuth 2.0 flow:
+
+1. **Authorization URL Generation**: `createAuthorizationUrl()` or `beginAuthorization()` generates the URL with appropriate scopes based on the account's enabled integrations
+2. **User Authentication**: User signs in via the generated URL and grants permissions
+3. **Callback Handling**: `completePendingAuthorization()` processes the callback URL from `WebHostService`
+4. **Token Exchange**: `exchangeAuthorizationCode()` exchanges the authorization code for access and refresh tokens
+5. **Token Storage**: Tokens are stored in memory and persisted to `VaultService`
+6. **Automatic Refresh**: The OAuth client automatically refreshes expired access tokens
+
+**Scope Management:**
+
+Scopes are automatically determined based on enabled integrations:
+
+- **User Info**: `https://www.googleapis.com/auth/userinfo.email` (always included)
+- **Gmail**: `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.compose`, `https://www.googleapis.com/auth/gmail.send`
+- **Calendar**: `https://www.googleapis.com/auth/calendar`
+- **Drive**: `https://www.googleapis.com/auth/drive`
 
 ### `GmailEmailProvider`
 
 Concrete `EmailProvider` implementation for Gmail.
 
 **Implements:** `EmailProvider`
+
+**Constructor:**
+
+```typescript
+constructor(options: GmailEmailProviderOptions, googleService: GoogleService)
+```
 
 **Capabilities:**
 
@@ -216,46 +180,40 @@ Concrete `EmailProvider` implementation for Gmail.
 
 **Methods:**
 
-```typescript
-class GmailEmailProvider implements EmailProvider {
-  readonly description: string;
-
-  constructor(
-    options: GmailEmailProviderOptions,
-    googleService: GoogleService
-  );
-
-  listBoxes(): Promise<EmailBox[]>;
-
-  getMessages(filter: EmailMessageQueryOptions): Promise<EmailMessagePage>;
-
-  searchMessages(filter: EmailSearchOptions): Promise<EmailMessage[]>;
-
-  getMessageById(id: string): Promise<EmailMessage>;
-
-  createDraft(data: DraftEmailData): Promise<EmailDraft>;
-
-  updateDraft(data: EmailDraft): Promise<EmailDraft>;
-
-  sendDraft(id: string): Promise<void>;
-}
-```
+- `listBoxes(): Promise<EmailBox[]>` - Lists available email boxes (Inbox, Sent, Drafts, Spam, Trash)
+- `getMessages(filter: EmailMessageQueryOptions): Promise<EmailMessagePage>` - Lists messages from inbox with optional unread filter
+- `searchMessages(filter: EmailSearchOptions): Promise<EmailMessage[]>` - Searches messages with query string and optional unread filter
+- `getMessageById(id: string): Promise<EmailMessage>` - Fetches full message content by ID
+- `createDraft(data: DraftEmailData): Promise<EmailDraft>` - Creates a new draft with to, cc, bcc, subject, and body
+- `updateDraft(data: EmailDraft): Promise<EmailDraft>` - Updates an existing draft
+- `sendDraft(id: string): Promise<void>` - Sends the draft by ID
 
 **Supported Operations:**
 
-- `listBoxes()`: Lists available email boxes (Inbox, Sent, Drafts, Spam, Trash)
-- `getMessages(filter)`: Lists messages from inbox with optional unread filter
-- `searchMessages(filter)`: Searches messages with query string and optional unread filter
-- `getMessageById(id)`: Fetches full message content by ID
-- `createDraft(data)`: Creates a new draft with to, cc, bcc, subject, and body
-- `updateDraft(data)`: Updates an existing draft
-- `sendDraft(id)`: Sends the draft by ID
+The provider supports all standard email operations through the Gmail API:
+
+- **Reading**: Lists and retrieves messages with full headers and body content
+- **Searching**: Uses Gmail's search syntax for flexible message filtering
+- **Drafts**: Creates, updates, and sends drafts with multipart MIME support
+- **Labels**: Returns Gmail label IDs along with messages
+
+**Scope Requirements:**
+
+- `https://www.googleapis.com/auth/gmail.readonly` - For listing and reading messages
+- `https://www.googleapis.com/auth/gmail.compose` - For creating and updating drafts
+- `https://www.googleapis.com/auth/gmail.send` - For sending drafts
 
 ### `GoogleCalendarProvider`
 
 Concrete `CalendarProvider` implementation for Google Calendar.
 
 **Implements:** `CalendarProvider`
+
+**Constructor:**
+
+```typescript
+constructor(options: GoogleCalendarProviderOptions, googleService: GoogleService)
+```
 
 **Capabilities:**
 
@@ -268,43 +226,38 @@ Concrete `CalendarProvider` implementation for Google Calendar.
 
 **Methods:**
 
-```typescript
-class GoogleCalendarProvider implements CalendarProvider {
-  readonly description: string;
-
-  constructor(
-    options: GoogleCalendarProviderOptions,
-    googleService: GoogleService
-  );
-
-  getUpcomingEvents(filter: CalendarEventFilterOptions): Promise<CalendarEvent[]>;
-
-  searchEvents(filter: CalendarEventSearchOptions): Promise<CalendarEvent[]>;
-
-  createEvent(data: CreateCalendarEventData): Promise<CalendarEvent>;
-
-  updateEvent(id: string, data: UpdateCalendarEventData): Promise<CalendarEvent>;
-
-  getEventById(id: string): Promise<CalendarEvent>;
-
-  deleteEvent(id: string): Promise<void>;
-}
-```
+- `getUpcomingEvents(filter: CalendarEventFilterOptions): Promise<CalendarEvent[]>` - Lists upcoming events from the calendar with time range and limit
+- `searchEvents(filter: CalendarEventSearchOptions): Promise<CalendarEvent[]>` - Searches events by query string within time range
+- `createEvent(data: CreateCalendarEventData): Promise<CalendarEvent>` - Creates a new event with title, description, location, attendees, and timing
+- `updateEvent(id: string, data: UpdateCalendarEventData): Promise<CalendarEvent>` - Updates an existing event by ID
+- `getEventById(id: string): Promise<CalendarEvent>` - Fetches a specific event by ID
+- `deleteEvent(id: string): Promise<void>` - Deletes an event by ID
 
 **Supported Operations:**
 
-- `getUpcomingEvents(filter)`: Lists upcoming events from the calendar with time range and limit
-- `searchEvents(filter)`: Searches events by query string within time range
-- `createEvent(data)`: Creates a new event with title, description, location, attendees, and timing
-- `updateEvent(id, data)`: Updates an existing event by ID
-- `getEventById(id)`: Fetches a specific event by ID
-- `deleteEvent(id)`: Deletes an event by ID
+The provider supports all standard calendar operations through the Google Calendar API:
+
+- **Listing**: Retrieves events within specified time ranges with customizable limits
+- **Searching**: Uses Google Calendar's search functionality for event queries
+- **Event Creation**: Supports all-day and timed events with attendees
+- **Event Updates**: Modifies existing events while preserving event ID
+- **Event Deletion**: Removes events from the calendar
+
+**Scope Requirements:**
+
+- `https://www.googleapis.com/auth/calendar` - Full access to calendar events
 
 ### `GoogleDriveFileSystemProvider`
 
 Concrete `FileSystemProvider` implementation for Google Drive.
 
 **Implements:** `FileSystemProvider`
+
+**Constructor:**
+
+```typescript
+constructor(options: GoogleDriveFileSystemProviderOptions, googleService: GoogleService)
+```
 
 **Capabilities:**
 
@@ -319,46 +272,63 @@ Concrete `FileSystemProvider` implementation for Google Drive.
 
 **Methods:**
 
-```typescript
-class GoogleDriveFileSystemProvider implements FileSystemProvider {
-  readonly name: string;
-  readonly description: string;
-
-  constructor(
-    options: GoogleDriveFileSystemProviderOptions,
-    googleService: GoogleService
-  );
-
-  writeFile(filePath: string, content: string | Buffer): Promise<boolean>;
-
-  appendFile(filePath: string, content: string | Buffer): Promise<boolean>;
-
-  deleteFile(filePath: string): Promise<boolean>;
-
-  readFile(filePath: string): Promise<Buffer | null>;
-
-  rename(oldPath: string, newPath: string): Promise<boolean>;
-
-  exists(filePath: string): Promise<boolean>;
-
-  stat(filePath: string): Promise<StatLike>;
-
-  createDirectory(dirPath: string, options?: { recursive?: boolean }): Promise<boolean>;
-
-  copy(source: string, destination: string, options?: { overwrite?: boolean }): Promise<boolean>;
-
-  getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string>;
-}
-```
+- `writeFile(filePath: string, content: string | Buffer): Promise<boolean>` - Creates or updates a file
+- `appendFile(filePath: string, content: string | Buffer): Promise<boolean>` - Appends content to a file
+- `deleteFile(filePath: string): Promise<boolean>` - Deletes a file
+- `readFile(filePath: string): Promise<Buffer | null>` - Reads file content as a buffer
+- `rename(oldPath: string, newPath: string): Promise<boolean>` - Renames or moves a file
+- `exists(filePath: string): Promise<boolean>` - Checks if a path exists
+- `stat(filePath: string): Promise<StatLike>` - Returns file/directory metadata
+- `createDirectory(dirPath: string, options?: { recursive?: boolean }): Promise<boolean>` - Creates a directory
+- `copy(source: string, destination: string, options?: { overwrite?: boolean }): Promise<boolean>` - Copies a file
+- `getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string>` - Generates directory tree as async iterator
 
 **Unsupported filesystem operations:**
 
-The following methods throw errors because the Drive API does not provide equivalent behavior to local filesystem
-providers:
+The following methods throw errors because the Drive API does not provide equivalent behavior to local filesystem providers:
 
 - `glob()` - Pattern-based file matching not supported
 - `watch()` - File system watching not supported
 - `grep()` - Content search across files not supported
+
+**Path Handling:**
+
+- Paths use forward slashes (`/`) as separators
+- The root folder is represented as an empty string or the configured `rootFolderId`
+- Files and folders are cached by ID for performance
+
+**Scope Requirements:**
+
+- `https://www.googleapis.com/auth/drive` - Full access to Google Drive files
+
+### `GoogleOAuthCallbackResource`
+
+Web resource that handles OAuth callback requests from Google.
+
+**Implements:** `WebResource`
+
+**Constructor:**
+
+```typescript
+constructor(googleService: GoogleService)
+```
+
+**Registration:**
+
+The resource is automatically registered with `WebHostService` at the path `/oauth/google/callback`.
+
+**Behavior:**
+
+- Handles GET requests to the callback URL
+- Extracts the authorization code and state from query parameters
+- Calls `GoogleService.completePendingAuthorization()` to process the callback
+- Returns an HTML page indicating success or failure
+- Resolves the pending authorization promise in `GoogleService`
+
+**HTML Response:**
+
+- **Success**: Displays "Google account connected" with instructions to close the tab
+- **Failure**: Displays the error message and returns HTTP 400
 
 ## Usage Examples
 
@@ -494,12 +464,12 @@ google:
 
 #### GoogleConfig
 
-| Field           | Type                            | Description                |
-|-----------------|---------------------------------|----------------------------|
-| `clientId`      | `string`                        | Google OAuth client ID     |
-| `clientSecret`  | `string`                        | Google OAuth client secret |
-| `accounts`      | `Record<string, GoogleAccount>` | Configured Google accounts |
-| `agentDefaults` | `GoogleAgentOptions`            | Default options for agents |
+| Field           | Type                            | Description                          |
+|-----------------|---------------------------------|--------------------------------------|
+| `clientId`      | `string`                        | Google OAuth client ID               |
+| `clientSecret`  | `string`                        | Google OAuth client secret           |
+| `accounts`      | `Record<string, GoogleAccount>` | Configured Google accounts           |
+| `agentDefaults` | `GoogleAgentOptions`            | Default options for agents           |
 
 #### GoogleAccount
 
@@ -532,41 +502,51 @@ google:
 
 ### Schemas
 
+The following Zod schemas are exported for configuration validation:
+
 - `GoogleConfigSchema`
-- `clientId?: string`
-- `clientSecret?: string`
-- `accounts: Record<string, GoogleAccount>`
-- `agentDefaults?: GoogleAgentOptions`
+  - `clientId?: string`
+  - `clientSecret?: string`
+  - `accounts: Record<string, GoogleAccount>`
+  - `agentDefaults?: GoogleAgentOptions`
+
 - `GoogleAccountSchema`
-- `email: string`
-- `gmail: GoogleAccountGmail`
-- `calendar: GoogleAccountCalendar`
-- `drive: GoogleAccountDrive`
+  - `email: string`
+  - `gmail: GoogleAccountGmail`
+  - `calendar: GoogleAccountCalendar`
+  - `drive: GoogleAccountDrive`
+
 - `GoogleAccountGmailSchema`
-- `description: string` (default: "Gmail")
+  - `description: string` (default: "Gmail")
+
 - `GoogleAccountCalendarSchema`
-- `description: string` (default: "Google Calendar")
-- `calendarId: string` (default: "primary")
+  - `description: string` (default: "Google Calendar")
+  - `calendarId: string` (default: "primary")
+
 - `GoogleAccountDriveSchema`
-- `description: string` (default: "Google Drive filesystem")
-- `rootFolderId: string` (default: "root")
+  - `description: string` (default: "Google Drive filesystem")
+  - `rootFolderId: string` (default: "root")
+
 - `GoogleStoredTokenSchema`
-- `refreshToken?: string`
-- `accessToken?: string`
-- `expiryDate?: number`
-- `grantedScopes?: string[]`
-- `profile?: UserInfo`
+  - `refreshToken?: string`
+  - `accessToken?: string`
+  - `expiryDate?: number`
+  - `grantedScopes?: string[]`
+  - `profile?: UserInfo`
+
 - `GmailEmailProviderOptionsSchema`
-- `description: string`
-- `account: string`
+  - `description: string`
+  - `account: string`
+
 - `GoogleCalendarProviderOptionsSchema`
-- `description: string`
-- `account: string`
-- `calendarId: string` (default: "primary")
+  - `description: string`
+  - `account: string`
+  - `calendarId: string` (default: "primary")
+
 - `GoogleDriveFileSystemProviderOptionsSchema`
-- `description: string` (default: "Google Drive filesystem")
-- `account: string`
-- `rootFolderId: string` (default: "root")
+  - `description: string` (default: "Google Drive filesystem")
+  - `account: string`
+  - `rootFolderId: string` (default: "root")
 
 ## Integration
 
@@ -574,16 +554,18 @@ The plugin integrates with abstract Token Ring services rather than registering 
 
 It registers:
 
-- `GoogleService`
+- `GoogleService` as a core service
 - Gmail providers into `EmailService`
 - Google Calendar providers into `CalendarService`
 - Google Drive providers into `FileSystemService`
+- OAuth callback resource into `WebHostService`
 
 This means `@tokenring-ai/google` is typically used alongside:
 
 - `@tokenring-ai/email`
 - `@tokenring-ai/calendar`
 - `@tokenring-ai/filesystem`
+- `@tokenring-ai/web-host`
 
 ## State Management
 
@@ -591,21 +573,22 @@ This means `@tokenring-ai/google` is typically used alongside:
 
 Important behavior:
 
-- Refreshed access tokens are stored in the service instance
-- Refresh tokens returned during code exchange are also kept in memory
-- Provider-specific state, such as current Gmail message, current Gmail draft, or current calendar event, is stored in
-  provider-local agent state slices
-- Token persistence is handled by the VaultService - tokens are automatically stored and retrieved from the vault
+- **Token Storage**: Refreshed access tokens and refresh tokens are stored in the service instance and automatically persisted to `VaultService`
+- **Profile Caching**: User profile information (email, name, etc.) is fetched once and cached in memory
+- **Token Auto-Refresh**: The OAuth client automatically refreshes expired access tokens and updates stored credentials
+- **Provider State**: Provider-specific state, such as current Gmail message, current Gmail draft, or current calendar event, is stored in provider-local agent state slices
+- **Vault Persistence**: All tokens are persisted to `VaultService` under the "google" category, keyed by account name
 
 ## Best Practices
 
-- Configure a stable `defaultAccount` when most providers use the same Google identity.
-- Persist refreshed credentials outside the service if long-lived operation matters.
-- Limit provider scopes to what the application needs when possible.
-- Treat Google Drive as an API-backed virtual filesystem, not a drop-in POSIX replacement.
-- Be aware that `glob`, `watch`, and `grep` operations are not supported due to Drive API limitations.
-- Use the `email` field in account configuration to specify the user's email address.
-- Enable only the integrations (gmail, calendar, drive) that you need for each account.
+- Configure a stable `agentDefaults.account` when most providers use the same Google identity
+- Persist refreshed credentials outside the service if long-lived operation matters (though vault persistence handles this automatically)
+- Limit provider scopes to what the application needs when possible (scopes are automatically determined by enabled integrations)
+- Treat Google Drive as an API-backed virtual filesystem, not a drop-in POSIX replacement
+- Be aware that `glob`, `watch`, and `grep` operations are not supported due to Drive API limitations
+- Enable only the integrations (gmail, calendar, drive) that you need for each account to minimize required scopes
+- Use descriptive account names that reflect the identity or purpose (e.g., "primary", "work", "personal")
+- Configure the `email` field in account configuration to match the user's expected email address
 
 ## Testing
 
@@ -633,16 +616,38 @@ bun test:coverage
 
 Key runtime dependencies:
 
-- `@tokenring-ai/agent`
-- `@tokenring-ai/app`
-- `@tokenring-ai/calendar`
-- `@tokenring-ai/email`
-- `@tokenring-ai/filesystem`
-- `@tokenring-ai/utility`
-- `@tokenring-ai/vault`
-- `@tokenring-ai/web-host`
-- `googleapis`
-- `zod`
+- `@tokenring-ai/agent` - Agent orchestration and command handling
+- `@tokenring-ai/app` - Base application and service registry
+- `@tokenring-ai/calendar` - Calendar service for provider registration
+- `@tokenring-ai/email` - Email service for provider registration
+- `@tokenring-ai/filesystem` - Filesystem service for provider registration
+- `@tokenring-ai/utility` - Utility functions and registries
+- `@tokenring-ai/vault` - Secure token storage
+- `@tokenring-ai/web-host` - OAuth callback handling
+- `googleapis` - Google API client libraries
+- `zod` - Schema validation
+
+## Exports
+
+The package exports the following:
+
+```typescript
+// Main classes
+export { default as GmailEmailProvider }
+export { default as GoogleCalendarProvider }
+export { default as GoogleDriveFileSystemProvider }
+export { default as GoogleService }
+
+// Schemas
+export {
+  GmailEmailProviderOptionsSchema,
+  GoogleAccountSchema,
+  GoogleCalendarProviderOptionsSchema,
+  GoogleConfigSchema,
+  GoogleDriveFileSystemProviderOptionsSchema,
+  GoogleStoredTokenSchema,
+}
+```
 
 ## License
 
