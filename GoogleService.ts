@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
 import type TokenRingApp from "@tokenring-ai/app";
 import type { TokenRingService } from "@tokenring-ai/app/types";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
 import VaultService from "@tokenring-ai/vault/VaultService";
 import { type Auth, type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2 } from "googleapis";
+import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import { type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema } from "./schema.ts";
 

@@ -1,11 +1,11 @@
 import type {
-  CalendarEvent,
   CalendarEventFilterOptions,
   CalendarEventSearchOptions,
   CalendarProvider,
   CreateCalendarEventData,
   UpdateCalendarEventData,
 } from "@tokenring-ai/calendar";
+import type { ParsedCalendarEvent } from "@tokenring-ai/calendar/CalendarProvider";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import type { calendar_v3 } from "googleapis";
 import type { z } from "zod";
@@ -57,7 +57,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     this.calendarId = options.calendarId;
   }
 
-  async getUpcomingEvents(filter: CalendarEventFilterOptions): Promise<CalendarEvent[]> {
+  async getUpcomingEvents(filter: CalendarEventFilterOptions): Promise<ParsedCalendarEvent[]> {
     const response = await this.googleService.withCalendar<GoogleCalendarListResponse>(
       this.account,
       {
@@ -82,7 +82,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return (response.items ?? []).map(item => this.toCalendarEvent(item));
   }
 
-  async searchEvents(filter: CalendarEventSearchOptions): Promise<CalendarEvent[]> {
+  async searchEvents(filter: CalendarEventSearchOptions): Promise<ParsedCalendarEvent[]> {
     const response = await this.googleService.withCalendar<GoogleCalendarListResponse>(
       this.account,
       {
@@ -108,7 +108,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return (response.items ?? []).map(item => this.toCalendarEvent(item));
   }
 
-  async createEvent(data: CreateCalendarEventData): Promise<CalendarEvent> {
+  async createEvent(data: CreateCalendarEventData): Promise<ParsedCalendarEvent> {
     const response = await this.googleService.withCalendar<GoogleCalendarEventResponse>(
       this.account,
       {
@@ -127,7 +127,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return this.toCalendarEvent(response);
   }
 
-  async updateEvent(id: string, data: UpdateCalendarEventData): Promise<CalendarEvent> {
+  async updateEvent(id: string, data: UpdateCalendarEventData): Promise<ParsedCalendarEvent> {
     const response = await this.googleService.withCalendar<GoogleCalendarEventResponse>(
       this.account,
       {
@@ -147,7 +147,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     return this.toCalendarEvent(response);
   }
 
-  async getEventById(id: string): Promise<CalendarEvent> {
+  async getEventById(id: string): Promise<ParsedCalendarEvent> {
     const response = await this.googleService.withCalendar<GoogleCalendarEventResponse>(
       this.account,
       {
@@ -183,7 +183,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     );
   }
 
-  private toCalendarEvent(item: GoogleCalendarEventResponse): CalendarEvent {
+  private toCalendarEvent(item: GoogleCalendarEventResponse): ParsedCalendarEvent {
     return stripUndefinedKeys({
       id: item.id,
       title: item.summary ?? "(untitled event)",
@@ -195,19 +195,19 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       attendees: item.attendees?.flatMap(attendee =>
         attendee.email
           ? [
-              stripUndefinedKeys({
-                email: attendee.email,
-                name: attendee.displayName,
-                responseStatus: attendee.responseStatus,
-              }),
-            ]
+            stripUndefinedKeys({
+              email: attendee.email,
+              name: attendee.displayName,
+              responseStatus: attendee.responseStatus,
+            }),
+          ]
           : [],
       ),
       status: item.status,
       url: item.htmlLink,
       meetingUrl: item.hangoutLink,
-      createdAt: item.created ? Date.parse(item.created) : undefined,
-      updatedAt: item.updated ? Date.parse(item.updated) : undefined,
+      createdAt: item.created ? new Date(item.created) : undefined,
+      updatedAt: item.updated ? new Date(item.updated) : undefined,
     });
   }
 

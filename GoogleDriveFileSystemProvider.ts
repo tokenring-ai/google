@@ -193,8 +193,12 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
       isFile: resolved.item.mimeType !== DRIVE_FOLDER_MIME,
       isDirectory: resolved.item.mimeType === DRIVE_FOLDER_MIME,
       size: resolved.item.size ? Number.parseInt(resolved.item.size, 10) : 0,
-      created: resolved.item.createdTime ? new Date(resolved.item.createdTime) : undefined,
-      modified: resolved.item.modifiedTime ? new Date(resolved.item.modifiedTime) : undefined,
+      ...(resolved.item.createdTime && {
+        created: new Date(resolved.item.createdTime)
+      }),
+      ...(resolved.item.modifiedTime && {
+        modified: new Date(resolved.item.modifiedTime)
+      })
     };
   }
 
@@ -292,7 +296,7 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
     throw new Error("Method grep is not supported by GoogleDriveFileSystemProvider.");
   }
 
-  async *getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string> {
+  async* getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string> {
     const normalizedPath = this.normalizePath(path);
     const ignoreFilter = params?.ignoreFilter ?? (() => false);
     const recursive = params?.recursive ?? true;
