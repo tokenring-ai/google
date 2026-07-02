@@ -11,8 +11,8 @@
     "@tokenring-ai/utility": "workspace:*",
     "@tokenring-ai/web-host": "workspace:*",
     "@tokenring-ai/vault": "workspace:*",
-    "googleapis": "^171.4.0",
-    "zod": "^4.3.6"
+    "googleapis": "^173.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "typescript": "^6.0.2",
