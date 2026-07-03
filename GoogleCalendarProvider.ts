@@ -195,12 +195,12 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       attendees: item.attendees?.flatMap(attendee =>
         attendee.email
           ? [
-            stripUndefinedKeys({
-              email: attendee.email,
-              name: attendee.displayName,
-              responseStatus: attendee.responseStatus,
-            }),
-          ]
+              stripUndefinedKeys({
+                email: attendee.email,
+                name: attendee.displayName,
+                responseStatus: attendee.responseStatus,
+              }),
+            ]
           : [],
       ),
       status: item.status,

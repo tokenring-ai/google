@@ -194,11 +194,11 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
       isDirectory: resolved.item.mimeType === DRIVE_FOLDER_MIME,
       size: resolved.item.size ? Number.parseInt(resolved.item.size, 10) : 0,
       ...(resolved.item.createdTime && {
-        created: new Date(resolved.item.createdTime)
+        created: new Date(resolved.item.createdTime),
       }),
       ...(resolved.item.modifiedTime && {
-        modified: new Date(resolved.item.modifiedTime)
-      })
+        modified: new Date(resolved.item.modifiedTime),
+      }),
     };
   }
 
@@ -296,7 +296,7 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
     throw new Error("Method grep is not supported by GoogleDriveFileSystemProvider.");
   }
 
-  async* getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string> {
+  async *getDirectoryTree(path: string, params?: DirectoryTreeOptions): AsyncGenerator<string> {
     const normalizedPath = this.normalizePath(path);
     const ignoreFilter = params?.ignoreFilter ?? (() => false);
     const recursive = params?.recursive ?? true;
@@ -424,7 +424,7 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
     let currentItem: DriveFile | null = null;
 
     for (let index = 0; index < components.length; index++) {
-      const component = components[index];
+      const component = components[index]!;
       const isLastComponent = index === components.length - 1;
       const componentKey = `id:${currentParentId}->${component}`;
       const cachedItem = this.idCache.get(componentKey);
@@ -465,7 +465,7 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
     const resolved = {
       fileId: currentItem?.id ?? null,
       parentId: components.length === 1 ? this.rootFolderId : currentParentId,
-      fileName: components[components.length - 1],
+      fileName: components[components.length - 1]!,
       item: currentItem,
     } satisfies ResolvedPath;
     if (currentItem) this.idCache.set(fullPathKey, resolved);

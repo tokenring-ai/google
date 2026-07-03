@@ -16,9 +16,9 @@ export const GoogleAccountDriveSchema = z.object({
 
 export const GoogleAccountSchema = z.object({
   email: z.string().email(),
-  gmail: GoogleAccountGmailSchema.prefault({}),
-  calendar: GoogleAccountCalendarSchema.prefault({}),
-  drive: GoogleAccountDriveSchema.prefault({}),
+  gmail: GoogleAccountGmailSchema.exactOptional(),
+  calendar: GoogleAccountCalendarSchema.exactOptional(),
+  drive: GoogleAccountDriveSchema.exactOptional(),
 });
 
 export const GoogleStoredTokenSchema = z.object({

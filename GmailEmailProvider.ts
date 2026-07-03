@@ -369,7 +369,7 @@ export default class GmailEmailProvider implements EmailProvider {
       .map(item => item.trim())
       .filter(Boolean)
       .map(item => {
-        const match = item.match(/^(.*)<([^>]+)>$/);
+        const match = item.match(/^(.*)<([^>]+)>$/) as [string, string, string] | undefined;
         if (!match) return { email: item.replace(/^"|"$/g, "") };
         const name = match[1].trim().replace(/^"|"$/g, "");
         if (!name) {
