@@ -191,7 +191,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       location: item.location,
       startAt: this.parseGoogleDate(item.start),
       endAt: this.parseGoogleDate(item.end),
-      allDay: !!item.start?.date && !item.start?.dateTime,
+      allDay: !!item.start?.date && !item.start.dateTime,
       attendees: item.attendees?.flatMap(attendee =>
         attendee.email
           ? [

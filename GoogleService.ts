@@ -1,10 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type TokenRingApp from "@tokenring-ai/app";
 import type { TokenRingService } from "@tokenring-ai/app/types";
+import { ConfigurationError } from "@tokenring-ai/app/types";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
 import VaultService from "@tokenring-ai/vault/VaultService";
 import { type Auth, type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2 } from "googleapis";
-import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import { type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema } from "./schema.ts";
 
@@ -111,7 +112,7 @@ export default class GoogleService implements TokenRingService {
     const auth = this.authData.get(accountName);
 
     return {
-      isAuthenticated: Boolean(auth?.refreshToken && auth?.accessToken),
+      isAuthenticated: Boolean(auth?.refreshToken && auth.accessToken),
       profile: auth?.profile,
       account,
     };
@@ -120,7 +121,10 @@ export default class GoogleService implements TokenRingService {
   requireAuthorizedAccount(accountName: string) {
     const authStatus = this.getAccountStatus(accountName);
     if (!authStatus.isAuthenticated) {
-      throw new Error(`Google account ${accountName} is not authenticated. Please authenticate with /google account auth ${accountName}`);
+      throw new ConfigurationError(
+        this.name,
+        `Google account ${accountName} is not authenticated. Please authenticate with /google account auth ${accountName}`,
+      );
     }
     return authStatus;
   }
@@ -185,12 +189,12 @@ export default class GoogleService implements TokenRingService {
     const callback = new URL(callbackUrl);
     const state = callback.searchParams.get("state");
     if (!state) {
-      throw new Error("The Google OAuth callback is missing its state parameter.");
+      throw new ConfigurationError(this.name, "The Google OAuth callback is missing its state parameter.");
     }
 
     const pending = this.pendingAuthorizations.get(state);
     if (!pending) {
-      throw new Error("No pending Google authorization was found for this callback.");
+      throw new ConfigurationError(this.name, "No pending Google authorization was found for this callback.");
     }
 
     if (`${callback.origin}${callback.pathname}` !== pending.redirectUri) {
