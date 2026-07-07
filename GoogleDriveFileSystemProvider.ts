@@ -1,4 +1,12 @@
-import type { DirectoryTreeOptions, FileSystemProvider, GrepOptions, GrepResult, StatLike, WatchOptions } from "@tokenring-ai/filesystem/FileSystemProvider";
+import type {
+  DirectoryTreeOptions,
+  FileSystemProvider,
+  FileSystemWatcher,
+  GrepOptions,
+  GrepResult,
+  StatLike,
+  WatchOptions,
+} from "@tokenring-ai/filesystem/FileSystemProvider";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import type { z } from "zod";
 import type GoogleService from "./GoogleService.ts";
@@ -288,7 +296,7 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
     return true;
   }
 
-  watch(_dir: string, _options?: WatchOptions) {
+  watch(_dir: string, _options?: WatchOptions): Promise<FileSystemWatcher> {
     throw new Error("Method watch is not supported by GoogleDriveFileSystemProvider.");
   }
 
