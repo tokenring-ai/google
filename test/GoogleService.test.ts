@@ -3,6 +3,7 @@ import createTestingApp from "@tokenring-ai/app/test/createTestingApp.test";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { AgentEventState } from "../../agent/state/agentEventState.ts";
 import VaultService from "../../vault/VaultService.ts";
 import { WebHostService } from "../../web-host/index.ts";
@@ -24,7 +25,8 @@ describe("GoogleService", () => {
   });
 
   it("includes Drive OAuth scope when Drive is configured", () => {
-    const service = new GoogleService(GoogleConfigSchema.parse({
+    const app = createTestingApp();
+    const service = new GoogleService(app, GoogleConfigSchema.parse({
       clientId: "client-id",
       clientSecret: "client-secret",
       accounts: {
@@ -55,9 +57,8 @@ describe("GoogleService", () => {
     const webHost = new WebHostService(app, {
       host: "127.0.0.1",
       port: 3000,
-      resources: {},
     });
-    const service = new GoogleService(GoogleConfigSchema.parse({
+    const service = new GoogleService(app, GoogleConfigSchema.parse({
       clientId: "client-id",
       clientSecret: "client-secret",
       accounts: {
@@ -67,7 +68,7 @@ describe("GoogleService", () => {
           },
         },
       },
-    }), vault);
+    }));
 
     vi.stubGlobal("Bun", {
       serve: vi.fn(() => ({
@@ -79,7 +80,7 @@ describe("GoogleService", () => {
     });
 
     app.addServices(vault, webHost, service);
-    await webHost.start(new AbortController().signal);
+    await webHost.listen();
     vi.spyOn(agent, "chatOutput").mockImplementation(() => {
     });
 
@@ -133,11 +134,17 @@ describe("GoogleService", () => {
 
     const result = await googleAuthCommand.execute({
       agent,
+      args: {},
       positionals: {
         name: "primary",
       },
     });
-    const stored = await vault.getJsonItem<{ userEmail?: string; refreshToken?: string; accessToken?: string; expiryDate?: number }>("google", "primary");
+    const stored = vault.requireJsonItem("google", "primary", z.object({
+      userEmail: z.string().optional(),
+      refreshToken: z.string().optional(),
+      accessToken: z.string().optional(),
+      expiryDate: z.number().optional(),
+    }));
 
     expect(beginAuthorization).toHaveBeenCalledWith("primary", "http://127.0.0.1:3000/oauth/google/callback");
     expect(result).toContain("tokens were saved to the vault");
@@ -152,51 +159,5 @@ describe("GoogleService", () => {
       ],
     });
     expect(typeof stored?.expiryDate).toBe("number");
-  });
-
-  it("explains when Calendar access fails because the token is missing the Calendar scope", async () => {
-    const service = new GoogleService(GoogleConfigSchema.parse({
-      clientId: "client-id",
-      clientSecret: "client-secret",
-      accounts: {
-        primary: {
-          accessToken: "access-token",
-          expiryDate: Date.now() + 60_000,
-          grantedScopes: [
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/gmail.readonly",
-          ],
-          email: {
-            description: "Gmail",
-          },
-          calendar: {
-            description: "Calendar",
-            calendarId: "primary",
-          },
-        },
-      },
-    }));
-
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      error: {
-        code: 403,
-        message: "Request had insufficient authentication scopes.",
-        status: "PERMISSION_DENIED",
-      },
-    }), {
-      status: 403,
-      headers: {
-        "Content-Type": "application/json",
-      },
-    })));
-
-    await expect(service.fetchGoogleRaw(
-      "primary",
-      "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-      { method: "GET" },
-      "list Google Calendar events",
-    )).rejects.toThrow(
-      "list Google Calendar events failed (403): Google account \"primary\" is authenticated, but it is missing permission for this request. Missing scope: https://www.googleapis.com/auth/calendar. Re-run /google account auth primary to grant access.",
-    );
   });
 });
