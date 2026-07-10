@@ -302,7 +302,7 @@ export default class GoogleService implements TokenRingService {
   private getDefaultScopes(account: RuntimeGoogleAccount): string[] {
     const scopes = new Set<string>([GOOGLE_USERINFO_SCOPE]);
 
-    if (account.email) {
+    if (account.gmail) {
       for (const scope of DEFAULT_GMAIL_SCOPES) scopes.add(scope);
     }
     if (account.calendar) {

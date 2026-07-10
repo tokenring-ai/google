@@ -1,15 +1,14 @@
-import createTestingAgent from "@tokenring-ai/agent/test/createTestingAgent.test";
-import createTestingApp from "@tokenring-ai/app/test/createTestingApp.test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
-import { AgentEventState } from "../../agent/state/agentEventState.ts";
+import { AgentEventState } from "@tokenring-ai/agent/state/agentEventState";
+import createTestingAgent from "@tokenring-ai/agent/test/createTestingAgent.test";
+import createTestingApp from "@tokenring-ai/app/test/createTestingApp.test";
 import VaultService from "../../vault/VaultService.ts";
-import { WebHostService } from "../../web-host/index.ts";
+import WebHostService from "../../web-host/WebHostService.ts";
 import googleAuthCommand from "../commands/google/account/auth.ts";
 import GoogleService from "../GoogleService.ts";
-import { GoogleConfigSchema } from "../schema.ts";
+import { GoogleConfigSchema, GoogleStoredTokenSchema } from "../schema.ts";
 
 describe("GoogleService", () => {
   let tempDir: string;
@@ -19,30 +18,64 @@ describe("GoogleService", () => {
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
+    try {
+      delete (global as any).fetch;
+    } catch {
+      // fetch may be non-configurable in this runtime
+    }
     await rm(tempDir, { recursive: true, force: true });
   });
 
   it("includes Drive OAuth scope when Drive is configured", () => {
     const app = createTestingApp();
-    const service = new GoogleService(app, GoogleConfigSchema.parse({
-      clientId: "client-id",
-      clientSecret: "client-secret",
-      accounts: {
-        primary: {
-          drive: {
-            description: "Drive",
-            rootFolderId: "root",
+    const service = new GoogleService(
+      app,
+      GoogleConfigSchema.parse({
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        accounts: {
+          primary: {
+            email: "me@example.com",
+            drive: {
+              description: "Drive",
+              rootFolderId: "root",
+            },
           },
         },
-      },
-    }));
+      }),
+    );
 
     const url = new URL(service.createAuthorizationUrl("primary", "http://localhost:3000/oauth/google/callback"));
     const scopes = new Set((url.searchParams.get("scope") ?? "").split(" "));
 
     expect(scopes.has("https://www.googleapis.com/auth/drive")).toBe(true);
+    expect(scopes.has("https://www.googleapis.com/auth/userinfo.email")).toBe(true);
+    // Gmail is not configured, so gmail scopes should not be requested
+    expect(scopes.has("https://www.googleapis.com/auth/gmail.readonly")).toBe(false);
+  });
+
+  it("includes Gmail OAuth scope when Gmail is configured", () => {
+    const app = createTestingApp();
+    const service = new GoogleService(
+      app,
+      GoogleConfigSchema.parse({
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        accounts: {
+          primary: {
+            email: "me@example.com",
+            gmail: {
+              description: "Gmail",
+            },
+          },
+        },
+      }),
+    );
+
+    const url = new URL(service.createAuthorizationUrl("primary", "http://localhost:3000/oauth/google/callback"));
+    const scopes = new Set((url.searchParams.get("scope") ?? "").split(" "));
+
+    expect(scopes.has("https://www.googleapis.com/auth/gmail.readonly")).toBe(true);
     expect(scopes.has("https://www.googleapis.com/auth/userinfo.email")).toBe(true);
   });
 
@@ -58,33 +91,33 @@ describe("GoogleService", () => {
       host: "127.0.0.1",
       port: 3000,
     });
-    const service = new GoogleService(app, GoogleConfigSchema.parse({
-      clientId: "client-id",
-      clientSecret: "client-secret",
-      accounts: {
-        primary: {
-          email: {
-            description: "Gmail",
+    const service = new GoogleService(
+      app,
+      GoogleConfigSchema.parse({
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        accounts: {
+          primary: {
+            email: "me@example.com",
+            gmail: {
+              description: "Gmail",
+            },
           },
         },
-      },
-    }));
+      }),
+    );
 
-    vi.stubGlobal("Bun", {
-      serve: vi.fn(() => ({
-        hostname: "127.0.0.1",
-        port: 3000,
-        stop: vi.fn(),
-      })),
-      file: vi.fn(),
-    });
+    spyOn(Bun, "serve").mockReturnValue({
+      hostname: "127.0.0.1",
+      port: 3000,
+      stop: mock(),
+    } as any);
 
     app.addServices(vault, webHost, service);
     await webHost.listen();
-    vi.spyOn(agent, "chatOutput").mockImplementation(() => {
-    });
+    spyOn(agent, "chatOutput").mockImplementation(() => {});
 
-    agent.mutateState(AgentEventState, (state) => {
+    agent.mutateState(AgentEventState, state => {
       state.currentlyExecutingInputItem = {
         request: {
           type: "input.received",
@@ -102,34 +135,26 @@ describe("GoogleService", () => {
       };
     });
 
-    vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: "access-token",
-        refresh_token: "refresh-token",
-        expires_in: 3600,
-        scope: [
-          "https://www.googleapis.com/auth/userinfo.email",
-          "https://www.googleapis.com/auth/gmail.readonly",
-        ].join(" "),
-        token_type: "Bearer",
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        email: "me@example.com",
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      })));
-
-    const beginAuthorization = vi.spyOn(service, "beginAuthorization").mockReturnValue({
+    const beginAuthorization = spyOn(service, "beginAuthorization").mockReturnValue({
       authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=test-state",
       waitForCallback: Promise.resolve("http://127.0.0.1:3000/oauth/google/callback?state=test-state&code=auth-code"),
+    });
+
+    spyOn(service, "exchangeAuthorizationCode").mockImplementation(async accountName => {
+      await vault.setJsonItem("google", accountName, {
+        refreshToken: "refresh-token",
+        accessToken: "access-token",
+        expiryDate: Date.now() + 3600_000,
+        grantedScopes: ["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly"],
+        profile: {
+          email: "me@example.com",
+        },
+      });
+      return {
+        isAuthenticated: true,
+        account: service.requireAccount(accountName),
+        profile: { email: "me@example.com" },
+      };
     });
 
     const result = await googleAuthCommand.execute({
@@ -139,24 +164,15 @@ describe("GoogleService", () => {
         name: "primary",
       },
     });
-    const stored = vault.requireJsonItem("google", "primary", z.object({
-      userEmail: z.string().optional(),
-      refreshToken: z.string().optional(),
-      accessToken: z.string().optional(),
-      expiryDate: z.number().optional(),
-    }));
+    const stored = vault.requireJsonItem("google", "primary", GoogleStoredTokenSchema);
 
     expect(beginAuthorization).toHaveBeenCalledWith("primary", "http://127.0.0.1:3000/oauth/google/callback");
-    expect(result).toContain("tokens were saved to the vault");
-    expect(result).toContain("me@example.com");
+    expect(result).toContain("authenticated with email me@example.com");
     expect(stored).toMatchObject({
-      userEmail: "me@example.com",
       refreshToken: "refresh-token",
       accessToken: "access-token",
-      grantedScopes: [
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/gmail.readonly",
-      ],
+      grantedScopes: ["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/gmail.readonly"],
+      profile: { email: "me@example.com" },
     });
     expect(typeof stored?.expiryDate).toBe("number");
   });

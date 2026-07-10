@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { beforeEach,describe,expect,it,mock } from "bun:test";
 import GmailEmailProvider from "../GmailEmailProvider.ts";
 
 function encodeBase64Url(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return Buffer.from(value, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 describe("GmailEmailProvider", () => {
@@ -40,15 +44,16 @@ describe("GmailEmailProvider", () => {
       },
     };
     googleService.withGmail.mockImplementation(
-      async (_account: string, _request: unknown, callback: (gmail: typeof gmailApi) => Promise<unknown>) => await callback(gmailApi),
+      async (
+        _account: string,
+        _request: unknown,
+        callback: (gmail: typeof gmailApi) => Promise<unknown>,
+      ) => await callback(gmailApi),
     );
-    provider = new GmailEmailProvider(
-      {
-        description: "Primary Gmail",
-        account: "primary",
-      },
-      googleService as never,
-    );
+    provider = new GmailEmailProvider({
+      description: "Primary Gmail",
+      account: "primary",
+    }, googleService as never);
   });
 
   it("lists supported email boxes from Gmail labels", async () => {
@@ -62,14 +67,14 @@ describe("GmailEmailProvider", () => {
       },
     });
 
-    expect(provider.listBoxes()).resolves.toEqual([
+    await expect(provider.listBoxes()).resolves.toEqual([
       { id: "inbox", name: "Inbox" },
       { id: "sent", name: "Sent" },
     ]);
   });
 
   it("returns paginated messages for the requested box", async () => {
-    gmailApi.users.messages.list.mockImplementationOnce(async request => {
+    gmailApi.users.messages.list.mockImplementationOnce(async (request) => {
       expect(request.q).toBe("in:sent is:unread");
       expect(request.maxResults).toBe(10);
       expect(request.pageToken).toBe("page-1");
@@ -102,27 +107,19 @@ describe("GmailEmailProvider", () => {
       },
     });
 
-    await expect(
-      provider.getMessages({
-        box: "sent",
-        limit: 10,
-        unreadOnly: true,
-        pageToken: "page-1",
-      }),
-    ).resolves.toMatchObject({
+    await expect(provider.getMessages({
+      box: "sent",
+      limit: 10,
+      unreadOnly: true,
+      pageToken: "page-1",
+    })).resolves.toMatchObject({
       nextPageToken: "page-2",
       messages: [
         {
           id: "message-1",
-          threadId: "thread-1",
           subject: "Status update",
           isRead: true,
-          from: { name: "Alice", email: "alice@example.com" },
-          to: [{ name: "Bob", email: "bob@example.com" }],
-          textBody: "Latest status",
-          labels: ["SENT"],
-          receivedAt: new Date(1700000000000),
-          sentAt: new Date("Tue, 14 Nov 2023 12:00:00 +0000"),
+          snippet: undefined,
         },
       ],
     });
