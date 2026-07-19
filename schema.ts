@@ -1,29 +1,30 @@
+import type { ConfigFieldMeta } from "@tokenring-ai/app/config/metadata";
 import { z } from "zod";
 
 export const GoogleAccountGmailSchema = z.object({
-  description: z.string().default("Gmail"),
+  description: z.string().default("Gmail").meta({ description: "Display name for this account's Gmail integration" } satisfies ConfigFieldMeta),
 });
 
 export const GoogleAccountCalendarSchema = z.object({
-  description: z.string().default("Google Calendar"),
-  calendarId: z.string().default("primary"),
+  description: z.string().default("Google Calendar").meta({ description: "Display name for this account's calendar integration" } satisfies ConfigFieldMeta),
+  calendarId: z.string().default("primary").meta({ description: "Calendar ID to use (\"primary\" for the account's main calendar)" } satisfies ConfigFieldMeta),
 });
 
 export const GoogleAccountDriveSchema = z.object({
-  description: z.string().default("Google Drive filesystem"),
-  rootFolderId: z.string().default("root"),
+  description: z.string().default("Google Drive filesystem").meta({ description: "Display name for this account's Drive filesystem" } satisfies ConfigFieldMeta),
+  rootFolderId: z.string().default("root").meta({ advanced: true, description: "Drive folder ID treated as the filesystem root" } satisfies ConfigFieldMeta),
 });
 
 export const GoogleAccountSchema = z.object({
-  email: z.string().email(),
-  gmail: GoogleAccountGmailSchema.exactOptional(),
-  calendar: GoogleAccountCalendarSchema.exactOptional(),
-  drive: GoogleAccountDriveSchema.exactOptional(),
+  email: z.string().email().meta({ description: "Google account email address" } satisfies ConfigFieldMeta),
+  gmail: GoogleAccountGmailSchema.exactOptional().meta({ label: "Gmail" } satisfies ConfigFieldMeta),
+  calendar: GoogleAccountCalendarSchema.exactOptional().meta({ label: "Calendar" } satisfies ConfigFieldMeta),
+  drive: GoogleAccountDriveSchema.exactOptional().meta({ label: "Drive" } satisfies ConfigFieldMeta),
 });
 
 export const GoogleStoredTokenSchema = z.object({
-  refreshToken: z.string().exactOptional(),
-  accessToken: z.string().exactOptional(),
+  refreshToken: z.string().exactOptional().meta({ sensitive: true, description: "OAuth refresh token (obtained via login)" } satisfies ConfigFieldMeta),
+  accessToken: z.string().exactOptional().meta({ sensitive: true, description: "OAuth access token (obtained via login)" } satisfies ConfigFieldMeta),
   expiryDate: z.number().exactOptional(),
   grantedScopes: z.array(z.string()).exactOptional(),
   profile: z
@@ -45,16 +46,21 @@ export const GoogleStoredTokenSchema = z.object({
 
 export const GoogleAgentOptionsSchema = z
   .object({
-    account: z.string().exactOptional(),
+    account: z.string().exactOptional().meta({ description: "Google account new agents use by default" } satisfies ConfigFieldMeta),
   })
   .default({});
 
-export const GoogleConfigSchema = z.object({
-  clientId: z.string().optional(),
-  clientSecret: z.string().optional(),
-  accounts: z.record(z.string(), GoogleAccountSchema).default({}),
-  agentDefaults: GoogleAgentOptionsSchema.default({}),
-});
+export const GoogleConfigSchema = z
+  .object({
+    clientId: z.string().optional().meta({ description: "Google OAuth client ID" } satisfies ConfigFieldMeta),
+    clientSecret: z.string().optional().meta({ sensitive: true, description: "Google OAuth client secret" } satisfies ConfigFieldMeta),
+    accounts: z
+      .record(z.string(), GoogleAccountSchema)
+      .default({})
+      .meta({ label: "Accounts", description: "Connected Google accounts, keyed by name" } satisfies ConfigFieldMeta),
+    agentDefaults: GoogleAgentOptionsSchema.default({}).meta({ label: "Agent Defaults" } satisfies ConfigFieldMeta),
+  })
+  .meta({ label: "Google", description: "Google OAuth, Gmail, Calendar, and Drive integration settings" } satisfies ConfigFieldMeta);
 
 export const GmailEmailProviderOptionsSchema = z.object({
   description: z.string(),
