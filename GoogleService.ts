@@ -5,7 +5,7 @@ import { ConfigurationError } from "@tokenring-ai/app/types";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
 import VaultService from "@tokenring-ai/vault/VaultService";
-import { type Auth, type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2 } from "googleapis";
+import { type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2 } from "googleapis";
 import type { z } from "zod";
 import { type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema } from "./schema.ts";
 
@@ -248,7 +248,11 @@ export default class GoogleService implements TokenRingService {
     return await this.runGoogleRequest(accountName, request, async auth => await operation(google.oauth2({ version: "v2", auth })));
   }
 
-  private async runGoogleRequest<T>(accountName: string, request: GoogleRequestOptions, operation: (auth: Auth.OAuth2Client) => Promise<T>): Promise<T> {
+  private async runGoogleRequest<T>(
+    accountName: string,
+    request: GoogleRequestOptions,
+    operation: (auth: ReturnType<typeof this.createOAuthClient>) => Promise<T>,
+  ): Promise<T> {
     const auth = this.createOAuthClient(accountName);
 
     try {
@@ -258,7 +262,7 @@ export default class GoogleService implements TokenRingService {
     }
   }
 
-  private createOAuthClient(accountName: string, redirectUri?: string): Auth.OAuth2Client {
+  private createOAuthClient(accountName: string, redirectUri?: string) {
     const oauthClient = new google.auth.OAuth2(this.options.clientId, this.options.clientSecret, redirectUri);
     oauthClient.setCredentials(this.getOAuthCredentials(accountName));
     oauthClient.on("tokens", tokens => {
