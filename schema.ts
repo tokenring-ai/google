@@ -1,4 +1,5 @@
 import type { ConfigFieldMeta } from "@tokenring-ai/app/config/metadata";
+import { fromEnv, secret, sourcedValue, type WithResolvedSecrets } from "@tokenring-ai/secrets/secret";
 import { z } from "zod";
 
 export const GoogleAccountGmailSchema = z.object({
@@ -79,14 +80,8 @@ export const GoogleAgentOptionsSchema = z
 
 export const GoogleConfigSchema = z
   .object({
-    clientId: z
-      .string()
-      .optional()
-      .meta({ description: "Google OAuth client ID" } satisfies ConfigFieldMeta),
-    clientSecret: z
-      .string()
-      .optional()
-      .meta({ sensitive: true, description: "Google OAuth client secret" } satisfies ConfigFieldMeta),
+    clientId: sourcedValue({ description: "Google OAuth client ID" } satisfies ConfigFieldMeta).default(fromEnv("GOOGLE_CLIENT_ID")),
+    clientSecret: secret({ description: "Google OAuth client secret" } satisfies ConfigFieldMeta).default(fromEnv("GOOGLE_CLIENT_SECRET")),
     accounts: z
       .record(z.string(), GoogleAccountSchema)
       .default({})
@@ -113,6 +108,12 @@ export const GoogleDriveFileSystemProviderOptionsSchema = z.object({
 });
 
 export type GoogleConfig = z.input<typeof GoogleConfigSchema>;
+export type ParsedGoogleConfig = z.output<typeof GoogleConfigSchema>;
+/** Config as handed to the service, with OAuth client secrets already resolved. */
+export type ResolvedGoogleConfig = Omit<WithResolvedSecrets<ParsedGoogleConfig, "clientId" | "clientSecret">, "clientId" | "clientSecret"> & {
+  clientId?: string | undefined;
+  clientSecret?: string | undefined;
+};
 export type GoogleAccount = z.input<typeof GoogleAccountSchema>;
 export type GoogleStoredToken = z.input<typeof GoogleStoredTokenSchema>;
 export type GmailEmailProviderOptions = z.input<typeof GmailEmailProviderOptionsSchema>;
@@ -121,3 +122,8 @@ export type GoogleDriveFileSystemProviderOptions = z.input<typeof GoogleDriveFil
 export type GoogleAccountEmail = z.input<typeof GoogleAccountGmailSchema>;
 export type GoogleAccountCalendar = z.input<typeof GoogleAccountCalendarSchema>;
 export type GoogleAccountDrive = z.input<typeof GoogleAccountDriveSchema>;
+export const GooglePackageConfigSchema = z.object({
+  google: GoogleConfigSchema.prefault({}),
+});
+
+export type GooglePackageConfig = z.input<typeof GooglePackageConfigSchema>;

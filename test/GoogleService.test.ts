@@ -8,7 +8,7 @@ import VaultService from "../../vault/VaultService.ts";
 import WebHostService from "../../web-host/WebHostService.ts";
 import googleAuthCommand from "../commands/google/account/auth.ts";
 import GoogleService from "../GoogleService.ts";
-import { GoogleConfigSchema, GoogleStoredTokenSchema } from "../schema.ts";
+import { GoogleStoredTokenSchema } from "../schema.ts";
 
 describe("GoogleService", () => {
   let tempDir: string;
@@ -28,22 +28,21 @@ describe("GoogleService", () => {
 
   it("includes Drive OAuth scope when Drive is configured", () => {
     const app = createTestingApp();
-    const service = new GoogleService(
-      app,
-      GoogleConfigSchema.parse({
-        clientId: "client-id",
-        clientSecret: "client-secret",
-        accounts: {
-          primary: {
-            email: "me@example.com",
-            drive: {
-              description: "Drive",
-              rootFolderId: "root",
-            },
+    const service = new GoogleService(app);
+    service.reconfigure({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      accounts: {
+        primary: {
+          email: "me@example.com",
+          drive: {
+            description: "Drive",
+            rootFolderId: "root",
           },
         },
-      }),
-    );
+      },
+      agentDefaults: {},
+    });
 
     const url = new URL(service.createAuthorizationUrl("primary", "http://localhost:3000/oauth/google/callback"));
     const scopes = new Set((url.searchParams.get("scope") ?? "").split(" "));
@@ -56,21 +55,20 @@ describe("GoogleService", () => {
 
   it("includes Gmail OAuth scope when Gmail is configured", () => {
     const app = createTestingApp();
-    const service = new GoogleService(
-      app,
-      GoogleConfigSchema.parse({
-        clientId: "client-id",
-        clientSecret: "client-secret",
-        accounts: {
-          primary: {
-            email: "me@example.com",
-            gmail: {
-              description: "Gmail",
-            },
+    const service = new GoogleService(app);
+    service.reconfigure({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      accounts: {
+        primary: {
+          email: "me@example.com",
+          gmail: {
+            description: "Gmail",
           },
         },
-      }),
-    );
+      },
+      agentDefaults: {},
+    });
 
     const url = new URL(service.createAuthorizationUrl("primary", "http://localhost:3000/oauth/google/callback"));
     const scopes = new Set((url.searchParams.get("scope") ?? "").split(" "));
@@ -96,21 +94,20 @@ describe("GoogleService", () => {
         },
       },
     });
-    const service = new GoogleService(
-      app,
-      GoogleConfigSchema.parse({
-        clientId: "client-id",
-        clientSecret: "client-secret",
-        accounts: {
-          primary: {
-            email: "me@example.com",
-            gmail: {
-              description: "Gmail",
-            },
+    const service = new GoogleService(app);
+    service.reconfigure({
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      accounts: {
+        primary: {
+          email: "me@example.com",
+          gmail: {
+            description: "Gmail",
           },
         },
-      }),
-    );
+      },
+      agentDefaults: {},
+    });
 
     spyOn(Bun, "serve").mockReturnValue({
       hostname: "127.0.0.1",
@@ -118,7 +115,7 @@ describe("GoogleService", () => {
       stop: mock(),
     } as any);
 
-    app.addServices(vault, webHost, service);
+    app.addServices([vault, webHost, service]);
     await webHost.listen();
     spyOn(agent, "chatOutput").mockImplementation(() => {});
 
@@ -164,10 +161,7 @@ describe("GoogleService", () => {
 
     const result = await googleAuthCommand.execute({
       agent,
-      args: {},
-      positionals: {
-        name: "primary",
-      },
+      args: { name: "primary" },
     });
     const stored = vault.requireJsonItem("google", "primary", GoogleStoredTokenSchema);
 

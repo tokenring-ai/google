@@ -39,10 +39,10 @@ export default {
   name: "google account auth",
   description: "Authenticate a Google account",
   inputSchema,
-  execute: async ({ agent, positionals }: AgentCommandInputType<typeof inputSchema>): Promise<string> => {
-    const googleService = agent.requireServiceByType(GoogleService);
-    const webHostService = agent.requireServiceByType(WebHostService);
-    const accountName = positionals.name;
+  execute: async ({ agent, args }: AgentCommandInputType<typeof inputSchema>): Promise<string> => {
+    const googleService = agent.requireService(GoogleService);
+    const webHostService = agent.requireService(WebHostService);
+    const accountName = args.name;
     if (!accountName) throw new CommandFailedError("Usage: /google account auth <accountName>");
 
     void googleService.requireAccount(accountName);
@@ -56,11 +56,13 @@ export default {
       ),
     );
 
+    const signal = agent.getAbortSignal();
+
     const callbackUrl = await agent.busyWithActivity(
       `Waiting for Google OAuth callback for ${accountName}`,
       Promise.race([
         waitForCallback,
-        delay(5 * 60 * 1000).then(() => {
+        delay(5 * 60 * 1000, null, { signal }).then(() => {
           throw new CommandFailedError(`Timed out waiting for the Google OAuth callback for "${accountName}"`);
         }),
       ]),

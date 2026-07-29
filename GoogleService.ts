@@ -2,12 +2,19 @@ import { randomUUID } from "node:crypto";
 import type TokenRingApp from "@tokenring-ai/app";
 import type { TokenRingService } from "@tokenring-ai/app/types";
 import { ConfigurationError } from "@tokenring-ai/app/types";
+import { CalendarService } from "@tokenring-ai/calendar";
+import { EmailService } from "@tokenring-ai/email";
+import { FileSystemService } from "@tokenring-ai/filesystem";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
 import VaultService from "@tokenring-ai/vault/VaultService";
+import { deepEquals } from "bun";
 import { type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2 } from "googleapis";
 import type { z } from "zod";
-import { type GoogleAccountSchema, type GoogleConfigSchema, GoogleStoredTokenSchema } from "./schema.ts";
+import GmailEmailProvider from "./GmailEmailProvider.ts";
+import GoogleCalendarProvider from "./GoogleCalendarProvider.ts";
+import GoogleDriveFileSystemProvider from "./GoogleDriveFileSystemProvider.ts";
+import { type GoogleAccountSchema, GoogleStoredTokenSchema, type ResolvedGoogleConfig } from "./schema.ts";
 
 type GoogleApiErrorResponse = {
   error?: {
@@ -80,30 +87,38 @@ export default class GoogleService implements TokenRingService {
   private readonly authData = new Map<string, StoredGoogleToken>();
   private readonly pendingAuthorizations = new Map<string, PendingAuthorization>();
   private vaultService: VaultService | null = null;
+  private options: ResolvedGoogleConfig = { accounts: {}, agentDefaults: {} };
 
-  constructor(
-    readonly app: TokenRingApp,
-    readonly options: z.output<typeof GoogleConfigSchema>,
-  ) {
-    this.accounts.setAll(options.accounts);
-
+  constructor(readonly app: TokenRingApp) {
     app.waitForService(VaultService, async vaultService => {
       this.vaultService = vaultService;
 
       for (const accountName of this.accounts.keysArray()) {
-        try {
-          const stored = this.vaultService.requireJsonItem(GOOGLE_VAULT_CATEGORY, accountName, GoogleStoredTokenSchema);
-          this.authData.set(accountName, stored);
-
-          await this.syncAccountProfile(accountName);
-        } catch (err) {
-          this.app.serviceError(
-            this,
-            `Couldn't load auth token for google account ${accountName} from the vault. Re-authenticate with /google account auth ${accountName} to re-authorize.`,
-            err,
-          );
-        }
+        await this.loadAccountAuth(accountName);
       }
+    });
+  }
+
+  reconfigure(options: ResolvedGoogleConfig): void {
+    this.options = options;
+
+    this.accounts.reconcileAgainst(options.accounts, {
+      creating: (name, account) => {
+        this.registerAccountProviders(name, account);
+        void this.loadAccountAuth(name);
+        return account;
+      },
+      deleting: name => {
+        this.unregisterAccountProviders(name);
+        this.authData.delete(name);
+      },
+      updating: (name, existing, account) => {
+        if (deepEquals(existing, account, true)) return existing;
+
+        this.unregisterAccountProviders(name);
+        this.registerAccountProviders(name, account);
+        return account;
+      },
     });
   }
 
@@ -220,10 +235,15 @@ export default class GoogleService implements TokenRingService {
     const oauthClient = this.createOAuthClient(name, redirectUri);
 
     try {
+      console.log("Received Google auth code:", code);
       const { tokens } = await oauthClient.getToken(code);
+      console.log("Received Google auth tokens:", tokens);
       await this.storeOAuthCredentials(name, tokens);
+      console.log("Stored Google auth tokens:", tokens);
       oauthClient.setCredentials(this.getOAuthCredentials(name));
+      console.log("Set Google auth credentials");
     } catch (error: unknown) {
+      console.log("Error exchanging Google auth code:", error);
       throw this.createRequestFailure(`exchange Google auth code for ${name}`, error);
     }
 
@@ -242,6 +262,65 @@ export default class GoogleService implements TokenRingService {
 
   async withDrive<T>(accountName: string, request: GoogleRequestOptions, operation: (drive: drive_v3.Drive) => Promise<T>): Promise<T> {
     return await this.runGoogleRequest(accountName, request, async auth => await operation(google.drive({ version: "v3", auth })));
+  }
+
+  private registerAccountProviders(name: string, account: RuntimeGoogleAccount): void {
+    if (account.gmail) {
+      const emailService = this.app.getService(EmailService);
+      emailService?.registerEmailProvider(name, new GmailEmailProvider({ description: account.gmail.description, account: name }, this));
+    }
+
+    if (account.calendar) {
+      const calendarService = this.app.getService(CalendarService);
+      calendarService?.registerCalendarProvider(
+        name,
+        new GoogleCalendarProvider(
+          {
+            description: account.calendar.description,
+            account: name,
+            calendarId: account.calendar.calendarId,
+          },
+          this,
+        ),
+      );
+    }
+
+    if (account.drive) {
+      const fileSystemService = this.app.getService(FileSystemService);
+      fileSystemService?.registerFileSystemProvider(
+        name,
+        new GoogleDriveFileSystemProvider(
+          {
+            description: account.drive.description,
+            account: name,
+            rootFolderId: account.drive.rootFolderId,
+          },
+          this,
+        ),
+      );
+    }
+  }
+
+  private unregisterAccountProviders(name: string): void {
+    this.app.getService(EmailService)?.unregisterEmailProvider(name);
+    this.app.getService(CalendarService)?.unregisterCalendarProvider(name);
+    this.app.getService(FileSystemService)?.unregisterFileSystemProvider(name);
+  }
+
+  private async loadAccountAuth(accountName: string): Promise<void> {
+    if (!this.vaultService) return;
+
+    try {
+      const stored = this.vaultService.requireJsonItem(GOOGLE_VAULT_CATEGORY, accountName, GoogleStoredTokenSchema);
+      this.authData.set(accountName, stored);
+      await this.syncAccountProfile(accountName);
+    } catch (err) {
+      this.app.serviceError(
+        this,
+        `Couldn't load auth token for google account ${accountName} from the vault. Re-authenticate with /google account auth ${accountName} to re-authorize.`,
+        err,
+      );
+    }
   }
 
   private async withOAuth2Api<T>(accountName: string, request: GoogleRequestOptions, operation: (oauth2: oauth2_v2.Oauth2) => Promise<T>): Promise<T> {

@@ -17,9 +17,9 @@ export default {
   name: "google account get",
   description: "Show a Google account",
   inputSchema,
-  execute: ({ agent, positionals }: AgentCommandInputType<typeof inputSchema>) => {
-    const googleService = agent.requireServiceByType(GoogleService);
-    const accountName = positionals.name;
+  execute: ({ agent, args }: AgentCommandInputType<typeof inputSchema>) => {
+    const googleService = agent.requireService(GoogleService);
+    const accountName = args.name;
     if (!accountName) throw new CommandFailedError("Usage: /google account get <accountName>");
 
     const { isAuthenticated, account, profile } = googleService.getAccountStatus(accountName);

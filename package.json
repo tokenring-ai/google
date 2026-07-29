@@ -8,6 +8,7 @@
     "@tokenring-ai/calendar": "workspace:*",
     "@tokenring-ai/email": "workspace:*",
     "@tokenring-ai/filesystem": "workspace:*",
+    "@tokenring-ai/secrets": "workspace:*",
     "@tokenring-ai/utility": "workspace:*",
     "@tokenring-ai/web-host": "workspace:*",
     "@tokenring-ai/vault": "workspace:*",

@@ -13,7 +13,7 @@ export default {
 /google account list`,
   inputSchema,
   execute: ({ agent }: AgentCommandInputType<typeof inputSchema>) => {
-    const googleService = agent.requireServiceByType(GoogleService);
+    const googleService = agent.requireService(GoogleService);
     const accounts = googleService.getAvailableAccounts();
     if (accounts.length === 0) return "No Google accounts are configured.";
 

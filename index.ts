@@ -9,4 +9,6 @@ export {
   GoogleConfigSchema,
   GoogleDriveFileSystemProviderOptionsSchema,
   GoogleStoredTokenSchema,
+  type ParsedGoogleConfig,
+  type ResolvedGoogleConfig,
 } from "./schema.ts";

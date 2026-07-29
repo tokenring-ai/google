@@ -131,7 +131,35 @@ export default class GmailEmailProvider implements EmailProvider {
       },
     );
 
-    return this.gmailDraftToEmailDraft(response, data);
+    return this.gmailDraftToEmailDraft(await this.hydrateDraft(response), data);
+  }
+
+  /**
+   * drafts.create/update only return a stub message (id/threadId/labelIds),
+   * so re-fetch the draft with format=full to get headers and body parts.
+   */
+  private async hydrateDraft(draft: GmailDraftResponse): Promise<GmailDraftResponse> {
+    if (draft.message?.payload) return draft;
+
+    try {
+      return await this.googleService.withGmail<GmailDraftResponse>(
+        this.account,
+        {
+          context: `fetch Gmail draft ${draft.id}`,
+          requiredScopes: [GMAIL_COMPOSE_SCOPE],
+        },
+        async gmail => {
+          const { data } = await gmail.users.drafts.get({
+            format: "full",
+            id: draft.id,
+            userId: "me",
+          });
+          return data as GmailDraftResponse;
+        },
+      );
+    } catch {
+      return draft;
+    }
   }
 
   async updateDraft(data: EmailDraft): Promise<EmailDraft> {
@@ -236,7 +264,7 @@ export default class GmailEmailProvider implements EmailProvider {
     const bcc = this.parseAddressList(this.getHeader(headers, "Bcc"));
     const textBody = this.extractBody(message.payload, "text/plain");
     const htmlBody = this.extractBody(message.payload, "text/html");
-    const receivedAt = message.internalDate ? new Date(Number(message.internalDate)) : new Date();
+    const sentAt = this.parseDateHeader(this.getHeader(headers, "Date"));
 
     return stripUndefinedKeys({
       id: message.id,
@@ -251,23 +279,28 @@ export default class GmailEmailProvider implements EmailProvider {
       htmlBody,
       labels: message.labelIds,
       isRead: !(message.labelIds ?? []).includes("UNREAD"),
-      receivedAt,
-      sentAt: this.parseDateHeader(this.getHeader(headers, "Date")) ?? receivedAt,
+      ...(message.internalDate && {
+        receivedAt: Number(message.internalDate),
+      }),
+      ...(sentAt && { sentAt: sentAt.getTime() }),
     });
   }
 
   private gmailDraftToEmailDraft(response: GmailDraftResponse, fallback: DraftEmailData): EmailDraft {
     const message = response.message;
-    const now = new Date();
-    const parsedMessage = message ? this.gmailMessageToEmailMessage(message) : undefined;
+
+    const now = Date.now();
+    const parsedMessage = message?.payload ? this.gmailMessageToEmailMessage(message) : undefined;
+    const pickList = <T>(parsed: T[] | undefined, fb: T[] | undefined): T[] | undefined => (parsed && parsed.length > 0 ? parsed : fb);
+    const parsedSubject = parsedMessage?.subject && parsedMessage.subject !== "(no subject)" ? parsedMessage.subject : undefined;
 
     return stripUndefinedKeys({
       id: response.id,
       threadId: message?.threadId ?? fallback.threadId,
-      subject: parsedMessage?.subject ?? fallback.subject,
-      to: parsedMessage?.to ?? fallback.to,
-      cc: parsedMessage?.cc ?? fallback.cc,
-      bcc: parsedMessage?.bcc ?? fallback.bcc,
+      subject: parsedSubject ?? fallback.subject,
+      to: pickList(parsedMessage?.to, fallback.to) ?? [],
+      cc: pickList(parsedMessage?.cc, fallback.cc),
+      bcc: pickList(parsedMessage?.bcc, fallback.bcc),
       textBody: parsedMessage?.textBody ?? fallback.textBody,
       htmlBody: parsedMessage?.htmlBody ?? fallback.htmlBody,
       createdAt: now,
