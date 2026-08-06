@@ -16,8 +16,8 @@ const inputSchema = {
     save: {
       description: "Where to save the Google account configuration - in the user configuration or in the project configuration",
       type: "enum",
-      values: ["user", "project"],
-      defaultValue: "user",
+      values: ["global", "workspace"],
+      defaultValue: "workspace",
     },
   },
   positionals: [
