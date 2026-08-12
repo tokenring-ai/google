@@ -17,6 +17,7 @@ describe("GmailEmailProvider", () => {
       messages: {
         get: ReturnType<typeof mock>;
         list: ReturnType<typeof mock>;
+        modify: ReturnType<typeof mock>;
       };
     };
   };
@@ -36,6 +37,7 @@ describe("GmailEmailProvider", () => {
         messages: {
           get: mock(),
           list: mock(),
+          modify: mock(),
         },
       },
     };
@@ -121,10 +123,26 @@ describe("GmailEmailProvider", () => {
           to: [{ name: "Bob", email: "bob@example.com" }],
           textBody: "Latest status",
           labels: ["SENT"],
-          receivedAt: new Date(1700000000000),
-          sentAt: new Date("Tue, 14 Nov 2023 12:00:00 +0000"),
+          receivedAt: 1700000000000,
+          sentAt: new Date("Tue, 14 Nov 2023 12:00:00 +0000").getTime(),
         },
       ],
     });
+  });
+
+  it("marks a message as read by removing the UNREAD label", async () => {
+    gmailApi.users.messages.modify.mockImplementationOnce(async request => {
+      expect(request).toEqual({
+        id: "message-1",
+        userId: "me",
+        requestBody: {
+          removeLabelIds: ["UNREAD"],
+        },
+      });
+      return { data: {} };
+    });
+
+    await expect(provider.markAsRead("message-1")).resolves.toBeUndefined();
+    expect(gmailApi.users.messages.modify).toHaveBeenCalledTimes(1);
   });
 });

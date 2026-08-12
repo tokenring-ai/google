@@ -32,10 +32,7 @@ export const GoogleAccountDriveSchema = z.object({
 });
 
 export const GoogleAccountSchema = z.object({
-  email: z
-    .string()
-    .email()
-    .meta({ description: "Google account email address" } satisfies ConfigFieldMeta),
+  email: z.email().meta({ description: "Google account email address" } satisfies ConfigFieldMeta),
   gmail: GoogleAccountGmailSchema.exactOptional().meta({ label: "Gmail" } satisfies ConfigFieldMeta),
   calendar: GoogleAccountCalendarSchema.exactOptional().meta({ label: "Calendar" } satisfies ConfigFieldMeta),
   drive: GoogleAccountDriveSchema.exactOptional().meta({ label: "Drive" } satisfies ConfigFieldMeta),

@@ -1,4 +1,3 @@
-import { CommandFailedError } from "@tokenring-ai/agent/AgentError";
 import type { AgentCommandInputSchema, AgentCommandInputType, TokenRingAgentCommand } from "@tokenring-ai/agent/types";
 import GoogleService from "../../../GoogleService.ts";
 
@@ -19,8 +18,8 @@ export default {
   inputSchema,
   execute: ({ agent, args }: AgentCommandInputType<typeof inputSchema>) => {
     const googleService = agent.requireService(GoogleService);
+    // `name` is a required positional; the framework merges it into args and validates presence.
     const accountName = args.name;
-    if (!accountName) throw new CommandFailedError("Usage: /google account get <accountName>");
 
     const { isAuthenticated, account, profile } = googleService.getAccountStatus(accountName);
 

@@ -71,6 +71,7 @@ const DEFAULT_GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.modify",
 ];
 const DEFAULT_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"];
 const DEFAULT_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"];
@@ -127,7 +128,8 @@ export default class GoogleService implements TokenRingService {
     const auth = this.authData.get(accountName);
 
     return {
-      isAuthenticated: Boolean(auth?.refreshToken && auth.accessToken),
+      // Offline-access grants only require a refresh token; access tokens expire ~hourly.
+      isAuthenticated: Boolean(auth?.refreshToken),
       profile: auth?.profile,
       account,
     };
@@ -235,15 +237,10 @@ export default class GoogleService implements TokenRingService {
     const oauthClient = this.createOAuthClient(name, redirectUri);
 
     try {
-      console.log("Received Google auth code:", code);
       const { tokens } = await oauthClient.getToken(code);
-      console.log("Received Google auth tokens:", tokens);
       await this.storeOAuthCredentials(name, tokens);
-      console.log("Stored Google auth tokens:", tokens);
       oauthClient.setCredentials(this.getOAuthCredentials(name));
-      console.log("Set Google auth credentials");
     } catch (error: unknown) {
-      console.log("Error exchanging Google auth code:", error);
       throw this.createRequestFailure(`exchange Google auth code for ${name}`, error);
     }
 
@@ -363,13 +360,21 @@ export default class GoogleService implements TokenRingService {
   private async storeOAuthCredentials(accountName: string, tokens: GoogleOAuthTokenUpdate) {
     const newAuth = { ...this.authData.get(accountName) };
 
-    if (tokens.access_token) newAuth.accessToken = tokens.access_token;
-    if (typeof tokens.expiry_date === "number") {
-      newAuth.expiryDate = tokens.expiry_date;
+    // Explicit undefined checks so null revocations clear stored values.
+    if (tokens.access_token !== undefined) {
+      if (tokens.access_token) newAuth.accessToken = tokens.access_token;
+      else delete newAuth.accessToken;
     }
-    if (tokens.refresh_token) newAuth.refreshToken = tokens.refresh_token;
-    if (tokens.scope) {
-      newAuth.grantedScopes = tokens.scope.split(/\s+/).filter(Boolean);
+    if (tokens.expiry_date !== undefined) {
+      if (typeof tokens.expiry_date === "number") newAuth.expiryDate = tokens.expiry_date;
+      else delete newAuth.expiryDate;
+    }
+    if (tokens.refresh_token !== undefined) {
+      if (tokens.refresh_token) newAuth.refreshToken = tokens.refresh_token;
+      else delete newAuth.refreshToken;
+    }
+    if (tokens.scope !== undefined) {
+      newAuth.grantedScopes = tokens.scope ? tokens.scope.split(/\s+/).filter(Boolean) : [];
     }
 
     this.authData.set(accountName, newAuth);
@@ -551,7 +556,6 @@ export default class GoogleService implements TokenRingService {
         return data;
       },
     );
-    console.log(`Fetched profile for ${accountName}:`, profile);
 
     this.authData.set(accountName, {
       ...this.authData.get(accountName),

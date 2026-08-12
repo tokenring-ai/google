@@ -1,14 +1,20 @@
-import type { WebResource } from "../web-host/types.ts";
+import type { WebResource } from "@tokenring-ai/web-host/types.ts";
 import type GoogleService from "./GoogleService.ts";
 import { GOOGLE_OAUTH_CALLBACK_PATH } from "./GoogleService.ts";
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+}
+
 function renderHtml(title: string, message: string): string {
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message);
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${title}</title>
+    <title>${safeTitle}</title>
     <style>
       body {
         margin: 0;
@@ -37,8 +43,8 @@ function renderHtml(title: string, message: string): string {
   </head>
   <body>
     <main>
-      <h1>${title}</h1>
-      <p>${message}</p>
+      <h1>${safeTitle}</h1>
+      <p>${safeMessage}</p>
     </main>
   </body>
 </html>`;

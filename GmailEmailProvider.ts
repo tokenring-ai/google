@@ -62,6 +62,7 @@ const gmailSystemBoxes = [
 const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 
 export default class GmailEmailProvider implements EmailProvider {
   description: string;
@@ -206,6 +207,25 @@ export default class GmailEmailProvider implements EmailProvider {
     );
   }
 
+  async markAsRead(id: string): Promise<void> {
+    await this.googleService.withGmail(
+      this.account,
+      {
+        context: `mark Gmail message ${id} as read`,
+        requiredScopes: [GMAIL_MODIFY_SCOPE],
+      },
+      async gmail => {
+        await gmail.users.messages.modify({
+          id,
+          userId: "me",
+          requestBody: {
+            removeLabelIds: ["UNREAD"],
+          },
+        });
+      },
+    );
+  }
+
   private async listMessages(query: string, limit: number, pageToken?: string): Promise<EmailMessagePage> {
     const list = await this.googleService.withGmail<GmailMessageListResponse>(
       this.account,
@@ -264,7 +284,7 @@ export default class GmailEmailProvider implements EmailProvider {
     const bcc = this.parseAddressList(this.getHeader(headers, "Bcc"));
     const textBody = this.extractBody(message.payload, "text/plain");
     const htmlBody = this.extractBody(message.payload, "text/html");
-    const sentAt = this.parseDateHeader(this.getHeader(headers, "Date"));
+    const sentAt = this.parseDateHeaderMs(this.getHeader(headers, "Date"));
 
     return stripUndefinedKeys({
       id: message.id,
@@ -279,10 +299,11 @@ export default class GmailEmailProvider implements EmailProvider {
       htmlBody,
       labels: message.labelIds,
       isRead: !(message.labelIds ?? []).includes("UNREAD"),
+      // Timestamps are ms since epoch (see EmailMessageSchema).
       ...(message.internalDate && {
         receivedAt: Number(message.internalDate),
       }),
-      ...(sentAt && { sentAt: sentAt.getTime() }),
+      ...(sentAt != null && { sentAt }),
     });
   }
 
@@ -416,9 +437,10 @@ export default class GmailEmailProvider implements EmailProvider {
     return addresses.map(address => (address.name ? `${address.name} <${address.email}>` : address.email)).join(", ");
   }
 
-  private parseDateHeader(value?: string): Date | undefined {
+  /** Parse an RFC 2822 Date header into ms since epoch. */
+  private parseDateHeaderMs(value?: string): number | undefined {
     if (!value) return undefined;
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? undefined : date;
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? undefined : ms;
   }
 }

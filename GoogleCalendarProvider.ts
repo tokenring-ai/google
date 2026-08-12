@@ -231,12 +231,14 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     });
   }
 
-  private toGoogleDateTime(date: Date | undefined, allDay?: boolean) {
+  private toGoogleDateTime(date: Date | undefined, allDay?: boolean, timeZone = "UTC") {
     if (!date) return undefined;
     if (allDay) {
-      return { date: date.toISOString().slice(0, 10) };
+      // All-day events use a calendar date; pin to UTC components to match stored instants.
+      return { date: date.toISOString().slice(0, 10), timeZone };
     }
-    return { dateTime: date.toISOString() };
+    // dateTime is emitted as an absolute UTC instant; include timeZone so Calendar displays correctly.
+    return { dateTime: date.toISOString(), timeZone };
   }
 
   private parseGoogleDate(value?: GoogleCalendarEventDateTime): Date {

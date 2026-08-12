@@ -87,11 +87,12 @@ export default {
       [`Open this URL to sign in to Google for ${name}`, authorizationUrl, "", `TokenRing is listening for the OAuth callback at ${redirectUri}.`].join("\n"),
     );
 
+    const signal = agent.getAbortSignal();
     const callbackUrl = await agent.busyWithActivity(
       `Waiting for Google OAuth callback for ${name}`,
       Promise.race([
         waitForCallback,
-        delay(5 * 60 * 1000).then(() => {
+        delay(5 * 60 * 1000, null, { signal }).then(() => {
           throw new CommandFailedError(`Timed out waiting for the Google OAuth callback for "${name}"`);
         }),
       ]),
@@ -110,5 +111,5 @@ export default {
 
 ## Example
 
-/google account auth primary`,
+/google connect primary`,
 } satisfies TokenRingAgentCommand<typeof inputSchema>;
