@@ -1,7 +1,7 @@
 import { AgentCommandService } from "@tokenring-ai/agent";
 import type { TokenRingPlugin } from "@tokenring-ai/app";
 import { resolveSecret } from "@tokenring-ai/secrets/SecretService";
-import { WebHostService } from "@tokenring-ai/web-host/index.ts";
+import { WebHostService } from "@tokenring-ai/web-host";
 import agentCommands from "./commands.ts";
 import GoogleOAuthCallbackResource from "./GoogleOAuthCallbackResource.ts";
 import GoogleService from "./GoogleService.ts";

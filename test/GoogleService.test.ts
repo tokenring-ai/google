@@ -5,7 +5,7 @@ import { AgentEventState } from "@tokenring-ai/agent/state/agentEventState";
 import createTestingAgent from "@tokenring-ai/agent/test/createTestingAgent.test";
 import createTestingApp from "@tokenring-ai/app/test/createTestingApp.test";
 import VaultService from "../../vault/VaultService.ts";
-import WebHostService from "../@tokenring-ai/web-host/WebHostService.ts";
+import WebHostService from "@tokenring-ai/web-host/WebHostService";
 import googleAuthCommand from "../commands/google/account/auth.ts";
 import GoogleService from "../GoogleService.ts";
 import { GoogleStoredTokenSchema } from "../schema.ts";
