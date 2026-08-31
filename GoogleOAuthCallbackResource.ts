@@ -1,4 +1,4 @@
-import type { WebResource } from "@tokenring-ai/web-host/types.ts";
+import type { WebResource } from "@tokenring-ai/web-host/types";
 import type GoogleService from "./GoogleService.ts";
 import { GOOGLE_OAUTH_CALLBACK_PATH } from "./GoogleService.ts";
 

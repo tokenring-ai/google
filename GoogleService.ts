@@ -103,10 +103,13 @@ export default class GoogleService implements TokenRingService {
   reconfigure(options: ResolvedGoogleConfig): void {
     this.options = options;
 
+    // `reconcileAgainst` invokes `creating` before the account is stored, so
+    // `requireAccount` inside auth loading would fail if started from there.
+    const added: string[] = [];
     this.accounts.reconcileAgainst(options.accounts, {
       creating: (name, account) => {
         this.registerAccountProviders(name, account);
-        void this.loadAccountAuth(name);
+        added.push(name);
         return account;
       },
       deleting: name => {
@@ -121,6 +124,8 @@ export default class GoogleService implements TokenRingService {
         return account;
       },
     });
+
+    for (const name of added) void this.loadAccountAuth(name);
   }
 
   getAccountStatus(accountName: string) {
@@ -541,25 +546,29 @@ export default class GoogleService implements TokenRingService {
   }
 
   private async syncAccountProfile(accountName: string): Promise<void> {
-    void this.requireAccount(accountName);
-    const authData = this.authData.get(accountName);
-    if (authData?.profile) return;
+    try {
+      void this.requireAccount(accountName);
+      const authData = this.authData.get(accountName);
+      if (authData?.profile) return;
 
-    const profile = await this.withOAuth2Api(
-      accountName,
-      {
-        context: `fetch Google profile for ${accountName}`,
-        requiredScopes: [GOOGLE_USERINFO_SCOPE],
-      },
-      async oauth2 => {
-        const { data } = await oauth2.userinfo.get();
-        return data;
-      },
-    );
+      const profile = await this.withOAuth2Api(
+        accountName,
+        {
+          context: `fetch Google profile for ${accountName}`,
+          requiredScopes: [GOOGLE_USERINFO_SCOPE],
+        },
+        async oauth2 => {
+          const { data } = await oauth2.userinfo.get();
+          return data;
+        },
+      );
 
-    this.authData.set(accountName, {
-      ...this.authData.get(accountName),
-      profile,
-    });
+      this.authData.set(accountName, {
+        ...this.authData.get(accountName),
+        profile,
+      });
+    } catch (error) {
+      this.app.serviceError(this, `Failed to sync profile for ${accountName}`, error);
+    }
   }
 }

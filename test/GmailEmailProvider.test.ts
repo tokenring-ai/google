@@ -7,6 +7,7 @@ function encodeBase64Url(value: string): string {
 
 describe("GmailEmailProvider", () => {
   let googleService: {
+    getAccountStatus: ReturnType<typeof mock>;
     getUserEmail: ReturnType<typeof mock>;
     withGmail: ReturnType<typeof mock>;
     requireUserEmail: ReturnType<typeof mock>;
@@ -14,6 +15,11 @@ describe("GmailEmailProvider", () => {
   let gmailApi: {
     users: {
       labels: { list: ReturnType<typeof mock> };
+      drafts: {
+        create: ReturnType<typeof mock>;
+        get: ReturnType<typeof mock>;
+        update: ReturnType<typeof mock>;
+      };
       messages: {
         get: ReturnType<typeof mock>;
         list: ReturnType<typeof mock>;
@@ -25,6 +31,11 @@ describe("GmailEmailProvider", () => {
 
   beforeEach(() => {
     googleService = {
+      getAccountStatus: mock(() => ({
+        account: { email: "me@example.com" },
+        profile: { email: "me@example.com" },
+        isAuthenticated: true,
+      })),
       getUserEmail: mock(),
       withGmail: mock(),
       requireUserEmail: mock(),
@@ -33,6 +44,11 @@ describe("GmailEmailProvider", () => {
       users: {
         labels: {
           list: mock(),
+        },
+        drafts: {
+          create: mock(),
+          get: mock(),
+          update: mock(),
         },
         messages: {
           get: mock(),
@@ -144,5 +160,59 @@ describe("GmailEmailProvider", () => {
 
     await expect(provider.markAsRead("message-1")).resolves.toBeUndefined();
     expect(gmailApi.users.messages.modify).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-fetches a draft after update so the returned payload is not a stub", async () => {
+    gmailApi.users.drafts.update.mockResolvedValueOnce({
+      data: {
+        id: "draft-1",
+        message: { id: "msg-1", threadId: "thread-1", labelIds: ["DRAFT"] },
+      },
+    });
+    gmailApi.users.drafts.get.mockImplementationOnce(async request => {
+      expect(request).toMatchObject({
+        format: "full",
+        id: "draft-1",
+        userId: "me",
+      });
+      return {
+        data: {
+          id: "draft-1",
+          message: {
+            id: "msg-1",
+            threadId: "thread-1",
+            payload: {
+              mimeType: "text/plain",
+              headers: [
+                { name: "Subject", value: "Updated subject" },
+                { name: "From", value: "me@example.com" },
+                { name: "To", value: "bob@example.com" },
+              ],
+              body: { data: encodeBase64Url("Updated body") },
+            },
+          },
+        },
+      };
+    });
+
+    await expect(
+      provider.updateDraft({
+        id: "draft-1",
+        threadId: "thread-1",
+        subject: "Updated subject",
+        to: [{ email: "bob@example.com" }],
+        textBody: "Updated body",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    ).resolves.toMatchObject({
+      id: "draft-1",
+      threadId: "thread-1",
+      subject: "Updated subject",
+      to: [{ email: "bob@example.com" }],
+      textBody: "Updated body",
+    });
+    expect(gmailApi.users.drafts.update).toHaveBeenCalledTimes(1);
+    expect(gmailApi.users.drafts.get).toHaveBeenCalledTimes(1);
   });
 });

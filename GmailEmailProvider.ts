@@ -187,7 +187,7 @@ export default class GmailEmailProvider implements EmailProvider {
       },
     );
 
-    return this.gmailDraftToEmailDraft(response, data);
+    return this.gmailDraftToEmailDraft(await this.hydrateDraft(response), data);
   }
 
   async sendDraft(id: string): Promise<void> {

@@ -14,13 +14,13 @@ export default {
   version: packageJSON.version,
   description: packageJSON.description,
   install(app) {
-    const googleService = app.addService(new GoogleService(app));
+    const googleService = app.addService(GoogleService, new GoogleService(app));
 
     app.waitForService(AgentCommandService, commandService => {
       commandService.addAgentCommands(agentCommands);
     });
 
-    app.services.waitForItemByType(WebHostService, webHostService => {
+    app.waitForService(WebHostService, webHostService => {
       webHostService.registerResource("google-oauth-callback", new GoogleOAuthCallbackResource(googleService));
     });
   },

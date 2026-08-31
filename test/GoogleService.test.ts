@@ -4,8 +4,8 @@ import path from "node:path";
 import { AgentEventState } from "@tokenring-ai/agent/state/agentEventState";
 import createTestingAgent from "@tokenring-ai/agent/test/createTestingAgent.test";
 import createTestingApp from "@tokenring-ai/app/test/createTestingApp.test";
-import VaultService from "../../vault/VaultService.ts";
 import WebHostService from "@tokenring-ai/web-host/WebHostService";
+import VaultService from "../../vault/VaultService.ts";
 import googleAuthCommand from "../commands/google/account/auth.ts";
 import GoogleService from "../GoogleService.ts";
 import { GoogleStoredTokenSchema } from "../schema.ts";
@@ -115,7 +115,9 @@ describe("GoogleService", () => {
       stop: mock(),
     } as any);
 
-    app.addServices([vault, webHost, service]);
+    app.addService(VaultService, vault);
+    app.addService(WebHostService, webHost);
+    app.addService(GoogleService, service);
     await webHost.listen();
     spyOn(agent, "chatOutput").mockImplementation(() => {});
 
