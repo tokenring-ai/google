@@ -317,7 +317,7 @@ export default class GoogleDriveFileSystemProvider implements FileSystemProvider
       for (const child of await this.listChildren(resolved.fileId)) {
         const childPath = normalizedPath ? `${normalizedPath}/${child.name}` : child.name;
         const yieldedPath = child.mimeType === DRIVE_FOLDER_MIME ? `${childPath}/` : childPath;
-        if (ignoreFilter(yieldedPath)) continue;
+        if (await ignoreFilter(yieldedPath, child.mimeType === DRIVE_FOLDER_MIME)) continue;
         yield yieldedPath;
         if (recursive && child.mimeType === DRIVE_FOLDER_MIME) {
           yield* this.getDirectoryTree(childPath, params);
