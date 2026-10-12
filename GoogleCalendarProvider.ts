@@ -5,7 +5,7 @@ import type {
   CreateCalendarEventData,
   UpdateCalendarEventData,
 } from "@tokenring-ai/calendar";
-import type { ParsedCalendarEvent } from "@tokenring-ai/calendar/CalendarProvider";
+import { type ParsedCalendarEvent, resolveSendUpdates } from "@tokenring-ai/calendar/CalendarProvider";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import type { calendar_v3 } from "googleapis";
 import type { z } from "zod";
@@ -39,6 +39,7 @@ type GoogleCalendarEventResponse = {
 
 type GoogleCalendarListResponse = {
   items?: GoogleCalendarEventResponse[];
+  nextPageToken?: string;
 };
 
 const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
@@ -65,17 +66,28 @@ export default class GoogleCalendarProvider implements CalendarProvider {
         requiredScopes: [GOOGLE_CALENDAR_SCOPE],
       },
       async calendar => {
-        const { data } = await calendar.events.list(
-          stripUndefinedKeys({
-            calendarId: this.calendarId,
-            maxResults: filter.limit ?? 10,
-            orderBy: "startTime",
-            singleEvents: true,
-            timeMax: filter.to?.toISOString(),
-            timeMin: (filter.from ?? new Date()).toISOString(),
-          }),
-        );
-        return data as GoogleCalendarListResponse;
+        // A single page silently truncates dense windows; page until the
+        // caller's limit is reached (or the feed is exhausted).
+        const limit = filter.limit ?? 10;
+        const items: GoogleCalendarEventResponse[] = [];
+        let pageToken: string | undefined;
+        do {
+          const { data } = await calendar.events.list(
+            stripUndefinedKeys({
+              calendarId: this.calendarId,
+              maxResults: limit,
+              orderBy: "startTime",
+              singleEvents: true,
+              timeMax: filter.to?.toISOString(),
+              timeMin: (filter.from ?? new Date()).toISOString(),
+              pageToken,
+            }),
+          );
+          const page = data as GoogleCalendarListResponse;
+          items.push(...(page.items ?? []));
+          pageToken = page.nextPageToken;
+        } while (pageToken && items.length < limit);
+        return { items: items.slice(0, limit) } satisfies GoogleCalendarListResponse;
       },
     );
 
@@ -90,18 +102,27 @@ export default class GoogleCalendarProvider implements CalendarProvider {
         requiredScopes: [GOOGLE_CALENDAR_SCOPE],
       },
       async calendar => {
-        const { data } = await calendar.events.list(
-          stripUndefinedKeys({
-            calendarId: this.calendarId,
-            maxResults: filter.limit ?? 10,
-            orderBy: "startTime",
-            q: filter.query,
-            singleEvents: true,
-            timeMax: filter.to?.toISOString(),
-            timeMin: (filter.from ?? new Date(Date.now() - 1000 * 60 * 60 * 24 * 30)).toISOString(),
-          }),
-        );
-        return data as GoogleCalendarListResponse;
+        const limit = filter.limit ?? 10;
+        const items: GoogleCalendarEventResponse[] = [];
+        let pageToken: string | undefined;
+        do {
+          const { data } = await calendar.events.list(
+            stripUndefinedKeys({
+              calendarId: this.calendarId,
+              maxResults: limit,
+              orderBy: "startTime",
+              q: filter.query,
+              singleEvents: true,
+              timeMax: filter.to?.toISOString(),
+              timeMin: (filter.from ?? new Date(Date.now() - 1000 * 60 * 60 * 24 * 30)).toISOString(),
+              pageToken,
+            }),
+          );
+          const page = data as GoogleCalendarListResponse;
+          items.push(...(page.items ?? []));
+          pageToken = page.nextPageToken;
+        } while (pageToken && items.length < limit);
+        return { items: items.slice(0, limit) } satisfies GoogleCalendarListResponse;
       },
     );
 
@@ -118,6 +139,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       async calendar => {
         const { data: responseData } = await calendar.events.insert({
           calendarId: this.calendarId,
+          sendUpdates: resolveSendUpdates(data),
           requestBody: this.toGoogleEventBody(data),
         });
         return responseData as GoogleCalendarEventResponse;
@@ -135,9 +157,12 @@ export default class GoogleCalendarProvider implements CalendarProvider {
         requiredScopes: [GOOGLE_CALENDAR_SCOPE],
       },
       async calendar => {
-        const { data: responseData } = await calendar.events.update({
+        // Patch, not update: update replaces the whole event, so a partial
+        // change (status only, attendees only) would wipe the other fields.
+        const { data: responseData } = await calendar.events.patch({
           calendarId: this.calendarId,
           eventId: id,
+          sendUpdates: resolveSendUpdates(data),
           requestBody: this.toGoogleEventBody(data),
         });
         return responseData as GoogleCalendarEventResponse;
@@ -231,14 +256,16 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     });
   }
 
-  private toGoogleDateTime(date: Date | undefined, allDay?: boolean, timeZone = "UTC") {
+  private toGoogleDateTime(date: Date | undefined, allDay?: boolean, timeZone = "UTC"): calendar_v3.Schema$EventDateTime | undefined {
     if (!date) return undefined;
+    // The other form is nulled explicitly so a patch that switches between
+    // all-day and timed does not leave both `date` and `dateTime` set.
     if (allDay) {
       // All-day events use a calendar date; pin to UTC components to match stored instants.
-      return { date: date.toISOString().slice(0, 10), timeZone };
+      return { date: date.toISOString().slice(0, 10), dateTime: null, timeZone };
     }
     // dateTime is emitted as an absolute UTC instant; include timeZone so Calendar displays correctly.
-    return { dateTime: date.toISOString(), timeZone };
+    return { dateTime: date.toISOString(), date: null, timeZone };
   }
 
   private parseGoogleDate(value?: GoogleCalendarEventDateTime): Date {

@@ -299,8 +299,10 @@ constructor(options: GmailEmailProviderOptions, googleService: GoogleService)
 - Retrieve a specific message by ID
 - Create and update drafts
 - Send a draft
-- Mark messages as read
-- List email boxes (Inbox, Sent, Drafts, Spam, Trash)
+- Mark messages as read or unread, star/unstar, archive
+- Move messages between Inbox, Spam, Trash and user labels
+- Resolve a Drafts-box message to its draft (resume and send in place)
+- List email boxes (Inbox, Starred, Sent, Drafts, Spam, Trash)
 
 **Methods:**
 
@@ -314,6 +316,12 @@ constructor(options: GmailEmailProviderOptions, googleService: GoogleService)
 | `updateDraft(data: EmailDraft): Promise<EmailDraft>` | Update an existing draft |
 | `sendDraft(id: string): Promise<void>` | Send a draft by ID |
 | `markAsRead(id: string): Promise<void>` | Remove the `UNREAD` label from a message |
+| `markAsUnread(id: string): Promise<void>` | Add the `UNREAD` label |
+| `archiveMessage(id: string): Promise<void>` | Remove the `INBOX` label |
+| `setStarred(id: string, starred: boolean): Promise<void>` | Add or remove the `STARRED` label (`isStarred` is read from labels) |
+| `moveMessage(id: string, box: string): Promise<void>` | `trash` uses the trash endpoint; other boxes add their label and remove the other location labels (`INBOX`/`SPAM`/`TRASH`). User labels are resolved by name; Sent, Drafts and Starred are refused |
+| `getDraftByMessageId(messageId: string): Promise<EmailDraft \| undefined>` | Scan `drafts.list` (up to 10 pages) for the draft wrapping a message |
+| `deleteMessage(id: string): Promise<void>` | Move a message to the trash (recoverable) |
 
 Search uses Gmail's search syntax: `box` values map to `in:inbox`, `in:sent`, `in:drafts`, `in:spam`, and `in:trash`; other values become `label:<name>`. Messages and drafts are rebuilt as multipart MIME (`text/plain` and/or `text/html`) before upload.
 
@@ -322,7 +330,7 @@ Search uses Gmail's search syntax: `box` values map to `in:inbox`, `in:sent`, `i
 - `https://www.googleapis.com/auth/gmail.readonly` — listing, reading, and searching messages
 - `https://www.googleapis.com/auth/gmail.compose` — creating and updating drafts
 - `https://www.googleapis.com/auth/gmail.send` — sending drafts
-- `https://www.googleapis.com/auth/gmail.modify` — marking messages as read
+- `https://www.googleapis.com/auth/gmail.modify` — read/unread, star, archive, move and trash
 
 ### `GoogleCalendarProvider`
 
@@ -339,7 +347,7 @@ constructor(options: GoogleCalendarProviderOptions, googleService: GoogleService
 - List upcoming events with a time range and limit
 - Search events by query within a time range
 - Retrieve a specific event by ID
-- Create events (timed and all-day, with attendees)
+- Create events (timed and all-day, with attendees and status)
 - Update events
 - Delete events
 
@@ -350,7 +358,7 @@ constructor(options: GoogleCalendarProviderOptions, googleService: GoogleService
 | `getUpcomingEvents(filter: CalendarEventFilterOptions): Promise<ParsedCalendarEvent[]>` | List upcoming events within the time range |
 | `searchEvents(filter: CalendarEventSearchOptions): Promise<ParsedCalendarEvent[]>` | Search events by query |
 | `createEvent(data: CreateCalendarEventData): Promise<ParsedCalendarEvent>` | Create an event |
-| `updateEvent(id: string, data: UpdateCalendarEventData): Promise<ParsedCalendarEvent>` | Update an event by ID |
+| `updateEvent(id: string, data: UpdateCalendarEventData): Promise<ParsedCalendarEvent>` | Patch an event by ID (only the given fields change, so a status- or attendee-only update keeps the rest) |
 | `getEventById(id: string): Promise<ParsedCalendarEvent>` | Fetch an event by ID |
 | `deleteEvent(id: string): Promise<void>` | Delete an event by ID |
 

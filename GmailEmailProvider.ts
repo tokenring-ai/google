@@ -46,6 +46,10 @@ type GmailDraftResponse = {
   id: string;
   message?: GmailMessageResponse;
 };
+type GmailDraftListResponse = {
+  drafts?: Array<{ id: string; message?: { id: string; threadId?: string | undefined } }>;
+  nextPageToken?: string | undefined;
+};
 type GmailSendResponse = {
   id: string;
   threadId?: string | undefined;
@@ -54,6 +58,7 @@ type GmailSendResponse = {
 
 const gmailSystemBoxes = [
   { id: "inbox", name: "Inbox", query: "in:inbox", labelName: "INBOX" },
+  { id: "starred", name: "Starred", query: "is:starred", labelName: "STARRED" },
   { id: "sent", name: "Sent", query: "in:sent", labelName: "SENT" },
   { id: "drafts", name: "Drafts", query: "in:drafts", labelName: "DRAFT" },
   { id: "spam", name: "Spam", query: "in:spam", labelName: "SPAM" },
@@ -63,6 +68,16 @@ const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
+
+/**
+ * Labels that say where a message lives. Moving swaps one for another; every
+ * other label (STARRED, UNREAD, user labels) is left alone.
+ */
+const GMAIL_LOCATION_LABELS = ["INBOX", "SPAM", "TRASH"] as const;
+/** Boxes that are views or system-managed, so nothing can be moved into them. */
+const GMAIL_UNMOVABLE_BOXES = new Set(["sent", "drafts", "starred"]);
+/** Upper bound on drafts scanned when resolving a Drafts-box message to its draft. */
+const MAX_DRAFT_PAGES = 10;
 
 export default class GmailEmailProvider implements EmailProvider {
   description: string;
@@ -100,10 +115,13 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   async searchMessages(filter: EmailSearchOptions): Promise<EmailMessage[]> {
+    return (await this.searchMessagePage(filter)).messages;
+  }
+
+  async searchMessagePage(filter: EmailSearchOptions): Promise<EmailMessagePage> {
     const queryParts = [filter.query, this.getBoxQuery(filter.box ?? "inbox")];
     if (filter.unreadOnly) queryParts.push("is:unread");
-    const page = await this.listMessages(queryParts.filter(Boolean).join(" ").trim(), filter.limit ?? 25);
-    return page.messages;
+    return await this.listMessages(queryParts.filter(Boolean).join(" ").trim(), filter.limit ?? 25, filter.pageToken);
   }
 
   async getMessageById(id: string): Promise<EmailMessage> {
@@ -226,6 +244,118 @@ export default class GmailEmailProvider implements EmailProvider {
     );
   }
 
+  async markAsUnread(id: string): Promise<void> {
+    await this.modifyLabels(id, { addLabelIds: ["UNREAD"] }, `mark Gmail message ${id} as unread`);
+  }
+
+  /** Gmail archiving removes the INBOX label; the message stays in All Mail. */
+  async archiveMessage(id: string): Promise<void> {
+    await this.modifyLabels(id, { removeLabelIds: ["INBOX"] }, `archive Gmail message ${id}`);
+  }
+
+  async setStarred(id: string, starred: boolean): Promise<void> {
+    await this.modifyLabels(id, starred ? { addLabelIds: ["STARRED"] } : { removeLabelIds: ["STARRED"] }, `${starred ? "star" : "unstar"} Gmail message ${id}`);
+  }
+
+  /**
+   * Moves a message by swapping its location label. Trash goes through the
+   * trash endpoint (so Gmail applies its retention rules); other targets add
+   * the box's label and drop the other location labels, which also restores a
+   * message from the trash. User labels are resolved by name.
+   */
+  async moveMessage(id: string, box: string): Promise<void> {
+    const normalizedBox = box.trim().toLowerCase();
+    if (GMAIL_UNMOVABLE_BOXES.has(normalizedBox)) {
+      throw new Error(`Messages cannot be moved into the Gmail ${normalizedBox} box`);
+    }
+    if (normalizedBox === "trash") {
+      await this.deleteMessage(id);
+      return;
+    }
+
+    const systemBox = gmailSystemBoxes.find(candidate => candidate.id === normalizedBox);
+    const targetLabelId = systemBox ? systemBox.labelName : await this.requireUserLabelId(box);
+    const removeLabelIds = GMAIL_LOCATION_LABELS.filter(label => label !== targetLabelId);
+    await this.modifyLabels(id, { addLabelIds: [targetLabelId], removeLabelIds }, `move Gmail message ${id} to ${box}`);
+  }
+
+  /**
+   * Gmail lists drafts as messages in the Drafts box; editing one needs the
+   * draft id, so scan the draft list for the message.
+   */
+  async getDraftByMessageId(messageId: string): Promise<EmailDraft | undefined> {
+    let pageToken: string | undefined;
+    for (let page = 0; page < MAX_DRAFT_PAGES; page++) {
+      const list = await this.googleService.withGmail<GmailDraftListResponse>(
+        this.account,
+        {
+          context: "list Gmail drafts",
+          requiredScopes: [GMAIL_COMPOSE_SCOPE],
+        },
+        async gmail => {
+          const { data } = await gmail.users.drafts.list(stripUndefinedKeys({ userId: "me", maxResults: 100, pageToken }));
+          return data as GmailDraftListResponse;
+        },
+      );
+      const match = list.drafts?.find(draft => draft.message?.id === messageId);
+      if (match) {
+        const hydrated = await this.hydrateDraft({ id: match.id });
+        return this.gmailDraftToEmailDraft(hydrated, { subject: "", to: [] });
+      }
+      pageToken = list.nextPageToken;
+      if (!pageToken) break;
+    }
+    return undefined;
+  }
+
+  private async modifyLabels(id: string, requestBody: { addLabelIds?: string[]; removeLabelIds?: string[] }, context: string): Promise<void> {
+    await this.googleService.withGmail(
+      this.account,
+      {
+        context,
+        requiredScopes: [GMAIL_MODIFY_SCOPE],
+      },
+      async gmail => {
+        await gmail.users.messages.modify({ id, userId: "me", requestBody });
+      },
+    );
+  }
+
+  private async requireUserLabelId(name: string): Promise<string> {
+    const response = await this.googleService.withGmail<GmailLabelListResponse>(
+      this.account,
+      {
+        context: "list Gmail labels",
+        requiredScopes: [GMAIL_READ_SCOPE],
+      },
+      async gmail => {
+        const { data } = await gmail.users.labels.list({ userId: "me" });
+        return data as GmailLabelListResponse;
+      },
+    );
+    const wanted = name.trim().toLowerCase();
+    const label = (response.labels ?? []).find(candidate => candidate.type !== "system" && candidate.name.toLowerCase() === wanted);
+    if (!label) throw new Error(`Gmail has no mailbox or label named "${name}"`);
+    return label.id;
+  }
+
+  /** Moves the message to the Gmail trash, where the user can restore it. */
+  async deleteMessage(id: string): Promise<void> {
+    await this.googleService.withGmail(
+      this.account,
+      {
+        context: `move Gmail message ${id} to trash`,
+        requiredScopes: [GMAIL_MODIFY_SCOPE],
+      },
+      async gmail => {
+        await gmail.users.messages.trash({
+          id,
+          userId: "me",
+        });
+      },
+    );
+  }
+
   private async listMessages(query: string, limit: number, pageToken?: string): Promise<EmailMessagePage> {
     const list = await this.googleService.withGmail<GmailMessageListResponse>(
       this.account,
@@ -299,6 +429,7 @@ export default class GmailEmailProvider implements EmailProvider {
       htmlBody,
       labels: message.labelIds,
       isRead: !(message.labelIds ?? []).includes("UNREAD"),
+      isStarred: (message.labelIds ?? []).includes("STARRED"),
       // Timestamps are ms since epoch (see EmailMessageSchema).
       ...(message.internalDate && {
         receivedAt: Number(message.internalDate),
