@@ -35,6 +35,10 @@ type GoogleCalendarEventResponse = {
     displayName?: string;
     responseStatus?: "accepted" | "declined" | "tentative" | "needsAction";
   }>;
+  /** Present for Meet and for third-party conferences. `hangoutLink` is often unset for the latter. */
+  conferenceData?: {
+    entryPoints?: Array<{ entryPointType?: string; uri?: string }>;
+  };
 };
 
 type GoogleCalendarListResponse = {
@@ -208,6 +212,12 @@ export default class GoogleCalendarProvider implements CalendarProvider {
     );
   }
 
+  /** Hangouts and Meet set hangoutLink. Other conferences only publish a video entry point. */
+  private meetingLink(item: GoogleCalendarEventResponse): string | undefined {
+    if (item.hangoutLink) return item.hangoutLink;
+    return item.conferenceData?.entryPoints?.find(entry => entry.entryPointType === "video" && entry.uri)?.uri;
+  }
+
   private toCalendarEvent(item: GoogleCalendarEventResponse): ParsedCalendarEvent {
     return stripUndefinedKeys({
       id: item.id,
@@ -230,7 +240,7 @@ export default class GoogleCalendarProvider implements CalendarProvider {
       ),
       status: item.status,
       url: item.htmlLink,
-      meetingUrl: item.hangoutLink,
+      meetingUrl: this.meetingLink(item),
       createdAt: item.created ? new Date(item.created) : undefined,
       updatedAt: item.updated ? new Date(item.updated) : undefined,
     });

@@ -55,6 +55,11 @@ type GmailSendResponse = {
   threadId?: string | undefined;
   labelIds?: string[] | undefined;
 };
+type GmailThreadResponse = {
+  messages?: Array<{ payload?: { headers?: GmailHeader[] } }>;
+};
+/** RFC Message-ID headers Gmail requires before it will accept a threadId. */
+type GmailThreadingHeaders = { inReplyTo: string; references: string };
 
 const gmailSystemBoxes = [
   { id: "inbox", name: "Inbox", query: "in:inbox", labelName: "INBOX" },
@@ -129,7 +134,8 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   async createDraft(data: DraftEmailData): Promise<EmailDraft> {
-    const raw = this.encodeBase64Url(this.buildMimeMessage(data));
+    const threading = await this.threadingHeaders(data.threadId);
+    const raw = this.encodeBase64Url(this.buildMimeMessage(data, threading));
     const response = await this.googleService.withGmail<GmailDraftResponse>(
       this.account,
       {
@@ -141,7 +147,9 @@ export default class GmailEmailProvider implements EmailProvider {
           requestBody: {
             message: stripUndefinedKeys({
               raw,
-              threadId: data.threadId,
+              // A Gmail thread id is not an RFC Message-ID. Sending it without
+              // In-Reply-To and References makes Gmail reject the draft.
+              threadId: threading ? data.threadId : undefined,
             }),
           },
           userId: "me",
@@ -182,7 +190,8 @@ export default class GmailEmailProvider implements EmailProvider {
   }
 
   async updateDraft(data: EmailDraft): Promise<EmailDraft> {
-    const raw = this.encodeBase64Url(this.buildMimeMessage(data));
+    const threading = await this.threadingHeaders(data.threadId);
+    const raw = this.encodeBase64Url(this.buildMimeMessage(data, threading));
     const response = await this.googleService.withGmail<GmailDraftResponse>(
       this.account,
       {
@@ -196,7 +205,7 @@ export default class GmailEmailProvider implements EmailProvider {
             id: data.id,
             message: stripUndefinedKeys({
               raw,
-              threadId: data.threadId,
+              threadId: threading ? data.threadId : undefined,
             }),
           },
           userId: "me",
@@ -460,15 +469,63 @@ export default class GmailEmailProvider implements EmailProvider {
     });
   }
 
-  private buildMimeMessage(data: DraftEmailData): string {
+  /**
+   * Gmail accepts `threadId` only when In-Reply-To and References are the
+   * thread's RFC 5322 Message-IDs. The id itself is not one of those, so a
+   * missing or unreadable thread is left unthreaded instead of being copied
+   * into References (Gmail rejects that draft).
+   */
+  private async threadingHeaders(threadId: string | undefined): Promise<GmailThreadingHeaders | undefined> {
+    if (!threadId) return undefined;
+    try {
+      const thread = await this.googleService.withGmail<GmailThreadResponse>(
+        this.account,
+        {
+          context: `fetch Gmail thread ${threadId}`,
+          requiredScopes: [GMAIL_READ_SCOPE],
+        },
+        async gmail => {
+          const { data } = await gmail.users.threads.get({
+            format: "metadata",
+            id: threadId,
+            metadataHeaders: ["Message-ID", "References"],
+            userId: "me",
+          });
+          return data as GmailThreadResponse;
+        },
+      );
+      const messages = thread.messages ?? [];
+      for (let index = messages.length - 1; index >= 0; index--) {
+        const headers = messages[index]?.payload?.headers ?? [];
+        const messageId = this.headerValue(headers, "Message-ID");
+        if (!messageId) continue;
+        const prior = this.headerValue(headers, "References")?.split(/\s+/) ?? [];
+        const references = prior.includes(messageId) ? prior.join(" ") : [...prior, messageId].join(" ");
+        return { inReplyTo: messageId, references };
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private headerValue(headers: GmailHeader[], name: string): string | undefined {
+    const value = headers.find(header => header.name?.toLowerCase() === name.toLowerCase())?.value?.replace(/[\r\n]+/g, " ").trim();
+    return value || undefined;
+  }
+
+  private buildMimeMessage(data: DraftEmailData, threading?: GmailThreadingHeaders): string {
     const { profile, account } = this.googleService.getAccountStatus(this.account);
 
     const headers = [`From: ${profile?.email ?? account.email}`, `To: ${this.formatAddressList(data.to)}`];
 
     if (data.cc?.length) headers.push(`Cc: ${this.formatAddressList(data.cc)}`);
     if (data.bcc?.length) headers.push(`Bcc: ${this.formatAddressList(data.bcc)}`);
-    if (data.threadId) headers.push(`References: ${data.threadId}`);
     headers.push(`Subject: ${data.subject}`);
+    if (threading) {
+      headers.push(`In-Reply-To: ${threading.inReplyTo}`);
+      headers.push(`References: ${threading.references}`);
+    }
     headers.push("MIME-Version: 1.0");
 
     if (data.textBody && data.htmlBody) {

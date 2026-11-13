@@ -21,6 +21,7 @@ describe("GmailEmailProvider", () => {
         list: ReturnType<typeof mock>;
         update: ReturnType<typeof mock>;
       };
+      threads: { get: ReturnType<typeof mock> };
       messages: {
         get: ReturnType<typeof mock>;
         list: ReturnType<typeof mock>;
@@ -53,6 +54,7 @@ describe("GmailEmailProvider", () => {
           list: mock(),
           update: mock(),
         },
+        threads: { get: mock(async () => ({ data: { messages: [] } })) },
         messages: {
           get: mock(),
           list: mock(),
@@ -313,6 +315,58 @@ describe("GmailEmailProvider", () => {
       await expect(provider.moveMessage("message-1", "Nope")).rejects.toThrow(/no mailbox or label/);
       expect(gmailApi.users.messages.modify).not.toHaveBeenCalled();
     });
+  });
+
+  function decodeBase64Url(value: string): string {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
+    return Buffer.from(`${normalized}${padding}`, "base64").toString("utf8");
+  }
+
+  it("threads a reply with the RFC Message-ID, not the Gmail thread id", async () => {
+    gmailApi.users.threads.get.mockResolvedValueOnce({
+      data: {
+        messages: [
+          { payload: { headers: [{ name: "Message-ID", value: "<older@mail.gmail.com>" }] } },
+          {
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<orig@mail.gmail.com>" },
+                { name: "References", value: "<older@mail.gmail.com>" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    gmailApi.users.drafts.create.mockImplementationOnce(async request => {
+      const message = (request as { requestBody: { message: { raw: string; threadId?: string } } }).requestBody.message;
+      const raw = decodeBase64Url(message.raw);
+      expect(raw).toContain("In-Reply-To: <orig@mail.gmail.com>");
+      expect(raw).toContain("References: <older@mail.gmail.com> <orig@mail.gmail.com>");
+      expect(raw).not.toContain("thread-9");
+      expect(message.threadId).toBe("thread-9");
+      return { data: { id: "draft-1", message: { id: "m", threadId: "thread-9", payload: { mimeType: "text/plain" } } } };
+    });
+
+    await provider.createDraft({
+      subject: "Re: Hi",
+      to: [{ email: "bob@example.com" }],
+      textBody: "hi",
+      threadId: "thread-9",
+    });
+    expect(gmailApi.users.threads.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not send a thread id Gmail would reject when the thread has no Message-ID", async () => {
+    gmailApi.users.drafts.create.mockImplementationOnce(async request => {
+      const message = (request as { requestBody: { message: { raw: string; threadId?: string } } }).requestBody.message;
+      expect(message.threadId).toBeUndefined();
+      expect(decodeBase64Url(message.raw)).not.toContain("References:");
+      return { data: { id: "draft-2", message: { id: "m2", payload: { mimeType: "text/plain" } } } };
+    });
+
+    await provider.createDraft({ subject: "Re: Hi", to: [{ email: "bob@example.com" }], textBody: "hi", threadId: "thread-9" });
   });
 
   describe("getDraftByMessageId", () => {

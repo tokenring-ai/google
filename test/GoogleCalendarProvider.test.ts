@@ -66,6 +66,41 @@ describe("GoogleCalendarProvider", () => {
     expect(explicit.requestBody).not.toHaveProperty("sendUpdates");
   });
 
+  it("uses a conference video link when the event has no hangout link", async () => {
+    calendarApi.events.insert.mockImplementationOnce(async () => ({
+      data: {
+        ...googleEvent,
+        conferenceData: {
+          entryPoints: [
+            { entryPointType: "phone", uri: "tel:+15551212" },
+            { entryPointType: "video", uri: "https://meet.example/abc" },
+          ],
+        },
+      },
+    }));
+
+    const created = await provider.createEvent({
+      title: "Planning",
+      startAt: new Date("2026-10-12T15:00:00.000Z"),
+      endAt: new Date("2026-10-12T16:00:00.000Z"),
+    });
+    expect(created.meetingUrl).toBe("https://meet.example/abc");
+
+    calendarApi.events.insert.mockImplementationOnce(async () => ({
+      data: {
+        ...googleEvent,
+        hangoutLink: "https://meet.google.com/abc-defg-hij",
+        conferenceData: { entryPoints: [{ entryPointType: "video", uri: "https://zoom.example/1" }] },
+      },
+    }));
+    const meet = await provider.createEvent({
+      title: "Planning",
+      startAt: new Date("2026-10-12T15:00:00.000Z"),
+      endAt: new Date("2026-10-12T16:00:00.000Z"),
+    });
+    expect(meet.meetingUrl).toBe("https://meet.google.com/abc-defg-hij");
+  });
+
   it("patches only the fields given, so a status change keeps the rest of the event", async () => {
     await provider.updateEvent("ev1", { status: "cancelled" });
 
