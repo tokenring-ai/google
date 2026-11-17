@@ -38,6 +38,8 @@ describe("GoogleService", () => {
           drive: {
             description: "Drive",
             rootFolderId: "root",
+            writable: false,
+            contextualSearch: false,
           },
         },
       },

@@ -4,7 +4,7 @@ import type { TokenRingService } from "@tokenring-ai/app/types";
 import { ConfigurationError } from "@tokenring-ai/app/types";
 import { CalendarService } from "@tokenring-ai/calendar";
 import { EmailService } from "@tokenring-ai/email";
-import { FileSystemService } from "@tokenring-ai/filesystem";
+import { RemoteStoreService } from "@tokenring-ai/filesystem";
 import { stripUndefinedKeys } from "@tokenring-ai/utility/object/stripObject";
 import KeyedRegistry from "@tokenring-ai/utility/registry/KeyedRegistry";
 import VaultService from "@tokenring-ai/vault/VaultService";
@@ -13,8 +13,9 @@ import { type calendar_v3, type drive_v3, type gmail_v1, google, type oauth2_v2 
 import type { z } from "zod";
 import GmailEmailProvider from "./GmailEmailProvider.ts";
 import GoogleCalendarProvider from "./GoogleCalendarProvider.ts";
-import GoogleDriveFileSystemProvider from "./GoogleDriveFileSystemProvider.ts";
+import type { GoogleRevoke, GoogleService as GoogleServiceName } from "./rpc/schema.ts";
 import { type GoogleAccountSchema, GoogleStoredTokenSchema, type ResolvedGoogleConfig } from "./schema.ts";
+import { GOOGLE_SERVICE_SCOPES, GOOGLE_USERINFO_SCOPE, scopesForServices } from "./scopes.ts";
 
 type GoogleApiErrorResponse = {
   error?: {
@@ -66,15 +67,13 @@ type PendingAuthorization = {
 };
 
 const GOOGLE_VAULT_CATEGORY = "google";
-const GOOGLE_USERINFO_SCOPE = "https://www.googleapis.com/auth/userinfo.email";
-const DEFAULT_GMAIL_SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.compose",
-  "https://www.googleapis.com/auth/gmail.send",
-  "https://www.googleapis.com/auth/gmail.modify",
-];
-const DEFAULT_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"];
-const DEFAULT_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"];
+const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
+const REVOKE_TIMEOUT_MS = 10_000;
+const DEFAULT_CALENDAR_SCOPES = [...GOOGLE_SERVICE_SCOPES.calendar];
+const DEFAULT_DRIVE_SCOPES = [...GOOGLE_SERVICE_SCOPES.drive];
+
+/** What happened when Google was asked to take back an account's access. */
+export type GoogleRevokeOutcome = { result: GoogleRevoke; message: string };
 
 export const GOOGLE_OAUTH_CALLBACK_PATH = "/oauth/google/callback";
 
@@ -84,6 +83,11 @@ export default class GoogleService implements TokenRingService {
 
   private readonly accounts = new KeyedRegistry<RuntimeGoogleAccount>();
   getAvailableAccounts = this.accounts.keysArray;
+
+  /** Accounts with Drive configured: the mounts of the googledrive:// remote store. */
+  getDriveAccounts(): { name: string; drive: NonNullable<RuntimeGoogleAccount["drive"]> }[] {
+    return this.accounts.entriesArray().flatMap(([name, account]) => (account.drive ? [{ name, drive: account.drive }] : []));
+  }
   requireAccount = this.accounts.require;
   private readonly authData = new Map<string, StoredGoogleToken>();
   private readonly pendingAuthorizations = new Map<string, PendingAuthorization>();
@@ -126,6 +130,7 @@ export default class GoogleService implements TokenRingService {
     });
 
     for (const name of added) void this.loadAccountAuth(name);
+    this.app.getService(RemoteStoreService)?.mountsChanged();
   }
 
   getAccountStatus(accountName: string) {
@@ -138,6 +143,72 @@ export default class GoogleService implements TokenRingService {
       profile: auth?.profile,
       account,
     };
+  }
+
+  /** Whether both the OAuth client ID and client secret have a value (from the vault, the environment, or settings). */
+  hasClientCredentials(): boolean {
+    return Boolean(this.options.clientId && this.options.clientSecret);
+  }
+
+  /** Replaces the client secret, and every stored token, in `text` so it can be shown or logged. */
+  redactSecrets(text: string): string {
+    const secrets = [this.options.clientSecret];
+    for (const auth of this.authData.values()) secrets.push(auth.refreshToken, auth.accessToken);
+    let result = text;
+    for (const secret of secrets) {
+      if (secret && secret.length >= 4) result = result.split(secret).join("[hidden]");
+    }
+    return result;
+  }
+
+  /** Ends the sign-in that is waiting for Google's callback for `accountName`, if there is one. */
+  cancelPendingAuthorizations(accountName: string, reason: string): void {
+    for (const pending of this.pendingAuthorizations.values()) {
+      if (pending.accountName === accountName) pending.reject(new Error(reason));
+    }
+  }
+
+  /**
+   * Takes an account's access away from TokenRing: ends a sign-in that is waiting, asks Google to revoke the
+   * grant (best effort: a failure is reported, never thrown), deletes the vault entry, and forgets the tokens
+   * and the account's Email, Calendar and Drive providers. The account's entry in the settings is the caller's
+   * to remove. The OAuth client ID and secret are shared by every account and are left alone.
+   */
+  async disconnectAccount(accountName: string): Promise<GoogleRevokeOutcome> {
+    this.requireAccount(accountName);
+    this.disconnects.set(accountName, this.disconnectCount(accountName) + 1);
+    this.cancelPendingAuthorizations(accountName, "The account was disconnected.");
+
+    const auth = this.authData.get(accountName);
+    const revoke = await this.revokeAtGoogle(auth?.refreshToken ?? auth?.accessToken);
+
+    this.unregisterAccountProviders(accountName);
+    this.authData.delete(accountName);
+    if (this.vaultService && this.vaultService.getItemsByCategory(GOOGLE_VAULT_CATEGORY)[accountName] !== undefined) {
+      await this.vaultService.deleteItem(GOOGLE_VAULT_CATEGORY, accountName);
+    }
+    this.app.getService(RemoteStoreService)?.mountsChanged();
+    return revoke;
+  }
+
+  private async revokeAtGoogle(token: string | undefined): Promise<GoogleRevokeOutcome> {
+    if (!token) return { result: "nothingToRevoke", message: "There was no saved access to take back at Google." };
+    const notConfirmed = (why: string): GoogleRevokeOutcome => ({
+      result: "notConfirmed",
+      message: `Google did not confirm that the access was taken back (${why}). To be sure, remove TokenRing at myaccount.google.com/permissions.`,
+    });
+    try {
+      const response = await fetch(GOOGLE_REVOKE_URL, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ token }),
+        signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
+      });
+      if (response.ok) return { result: "confirmed", message: "Google confirmed that the access was taken back." };
+      return notConfirmed(`it answered with status ${response.status}`);
+    } catch (error) {
+      return notConfirmed(this.redactSecrets(Error.isError(error) ? error.message : "could not reach Google"));
+    }
   }
 
   requireAuthorizedAccount(accountName: string) {
@@ -175,9 +246,24 @@ export default class GoogleService implements TokenRingService {
     );
   }
 
+  /** The Google services this account is set up to use. */
+  getAccountServices(accountName: string): GoogleServiceName[] {
+    const account = this.requireAccount(accountName);
+    return [
+      ...(account.gmail ? (["gmail"] as const) : []),
+      ...(account.calendar ? (["calendar"] as const) : []),
+      ...(account.drive ? (["drive"] as const) : []),
+    ];
+  }
+
+  /**
+   * Starts a sign-in for `accountName`. It asks Google for the permissions of the account's configured
+   * services, or, when `services` is given, of exactly those (to add a service before it is saved).
+   */
   beginAuthorization(
     accountName: string,
     redirectUri: string,
+    options: { services?: readonly GoogleServiceName[] } = {},
   ): {
     authorizationUrl: string;
     waitForCallback: Promise<string>;
@@ -202,6 +288,7 @@ export default class GoogleService implements TokenRingService {
     return {
       authorizationUrl: this.createAuthorizationUrl(accountName, redirectUri, {
         state,
+        ...(options.services && { scopes: scopesForServices(options.services) }),
       }),
       waitForCallback,
     };
@@ -240,9 +327,18 @@ export default class GoogleService implements TokenRingService {
 
   async exchangeAuthorizationCode(name: string, code: string, redirectUri: string) {
     const oauthClient = this.createOAuthClient(name, redirectUri);
+    const started = this.disconnectCount(name);
+
+    let tokens: GoogleOAuthTokenUpdate;
+    try {
+      ({ tokens } = await oauthClient.getToken(code));
+    } catch (error: unknown) {
+      throw this.createRequestFailure(`exchange Google auth code for ${name}`, error);
+    }
+    // A disconnect that ran while Google was answering must not be undone by tokens arriving afterwards.
+    await this.abandonIfDisconnected(name, started, tokens.refresh_token ?? tokens.access_token ?? undefined);
 
     try {
-      const { tokens } = await oauthClient.getToken(code);
       await this.storeOAuthCredentials(name, tokens);
       oauthClient.setCredentials(this.getOAuthCredentials(name));
     } catch (error: unknown) {
@@ -251,7 +347,26 @@ export default class GoogleService implements TokenRingService {
 
     await this.syncAccountProfile(name);
     await this.tryStoreAuthDataInVault(name);
+    await this.abandonIfDisconnected(name, started, tokens.refresh_token ?? tokens.access_token ?? undefined);
     return this.getAccountStatus(name);
+  }
+
+  /** How many times the account has been disconnected; a sign-in compares it before and after its awaits. */
+  private disconnects = new Map<string, number>();
+
+  private disconnectCount(name: string): number {
+    return this.disconnects.get(name) ?? 0;
+  }
+
+  /** If the account was disconnected since `started`, throws away whatever was saved, takes the new grant back, and fails. */
+  private async abandonIfDisconnected(name: string, started: number, token: string | undefined): Promise<void> {
+    if (this.disconnectCount(name) === started) return;
+    this.authData.delete(name);
+    if (this.vaultService && this.vaultService.getItemsByCategory(GOOGLE_VAULT_CATEGORY)[name] !== undefined) {
+      await this.vaultService.deleteItem(GOOGLE_VAULT_CATEGORY, name);
+    }
+    await this.revokeAtGoogle(token);
+    throw new Error(`${name} was disconnected while signing in, so nothing was saved.`);
   }
 
   async withGmail<T>(accountName: string, request: GoogleRequestOptions, operation: (gmail: gmail_v1.Gmail) => Promise<T>): Promise<T> {
@@ -286,27 +401,11 @@ export default class GoogleService implements TokenRingService {
         ),
       );
     }
-
-    if (account.drive) {
-      const fileSystemService = this.app.getService(FileSystemService);
-      fileSystemService?.registerFileSystemProvider(
-        name,
-        new GoogleDriveFileSystemProvider(
-          {
-            description: account.drive.description,
-            account: name,
-            rootFolderId: account.drive.rootFolderId,
-          },
-          this,
-        ),
-      );
-    }
   }
 
   private unregisterAccountProviders(name: string): void {
     this.app.getService(EmailService)?.unregisterEmailProvider(name);
     this.app.getService(CalendarService)?.unregisterCalendarProvider(name);
-    this.app.getService(FileSystemService)?.unregisterFileSystemProvider(name);
   }
 
   private async loadAccountAuth(accountName: string): Promise<void> {
@@ -392,20 +491,13 @@ export default class GoogleService implements TokenRingService {
     await this.vaultService.setJsonItem(GOOGLE_VAULT_CATEGORY, accountName, authData);
   }
 
+  /** Exactly the permissions of the services the account has; nothing for a service it does not use. */
   private getDefaultScopes(account: RuntimeGoogleAccount): string[] {
-    const scopes = new Set<string>([GOOGLE_USERINFO_SCOPE]);
-
-    if (account.gmail) {
-      for (const scope of DEFAULT_GMAIL_SCOPES) scopes.add(scope);
-    }
-    if (account.calendar) {
-      for (const scope of DEFAULT_CALENDAR_SCOPES) scopes.add(scope);
-    }
-    if (account.drive) {
-      for (const scope of DEFAULT_DRIVE_SCOPES) scopes.add(scope);
-    }
-
-    return Array.from(scopes);
+    return scopesForServices([
+      ...(account.gmail ? (["gmail"] as const) : []),
+      ...(account.calendar ? (["calendar"] as const) : []),
+      ...(account.drive ? (["drive"] as const) : []),
+    ]);
   }
 
   private createRequestFailure(context: string, error: unknown): Error {

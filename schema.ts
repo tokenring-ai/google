@@ -23,12 +23,20 @@ export const GoogleAccountCalendarSchema = z.object({
 export const GoogleAccountDriveSchema = z.object({
   description: z
     .string()
-    .default("Google Drive filesystem")
-    .meta({ description: "Display name for this account's Drive filesystem" } satisfies ConfigFieldMeta),
+    .default("Google Drive")
+    .meta({ description: "Display name for this account's Drive" } satisfies ConfigFieldMeta),
   rootFolderId: z
     .string()
     .default("root")
-    .meta({ advanced: true, description: "Drive folder ID treated as the filesystem root" } satisfies ConfigFieldMeta),
+    .meta({ advanced: true, description: "Drive folder ID that googledrive://<account>/ opens" } satisfies ConfigFieldMeta),
+  writable: z
+    .boolean()
+    .default(false)
+    .meta({ description: "Let agents and the UI create and replace files in this Drive" } satisfies ConfigFieldMeta),
+  contextualSearch: z
+    .boolean()
+    .default(false)
+    .meta({ description: "Include this Drive in chat @ mention search, as its own category" } satisfies ConfigFieldMeta),
 });
 
 export const GoogleAccountSchema = z.object({
@@ -98,12 +106,6 @@ export const GoogleCalendarProviderOptionsSchema = z.object({
   calendarId: z.string().default("primary"),
 });
 
-export const GoogleDriveFileSystemProviderOptionsSchema = z.object({
-  description: z.string().default("Google Drive filesystem"),
-  account: z.string(),
-  rootFolderId: z.string().default("root"),
-});
-
 export type GoogleConfig = z.input<typeof GoogleConfigSchema>;
 export type ParsedGoogleConfig = z.output<typeof GoogleConfigSchema>;
 /** Config as handed to the service, with OAuth client secrets already resolved. */
@@ -115,7 +117,6 @@ export type GoogleAccount = z.input<typeof GoogleAccountSchema>;
 export type GoogleStoredToken = z.input<typeof GoogleStoredTokenSchema>;
 export type GmailEmailProviderOptions = z.input<typeof GmailEmailProviderOptionsSchema>;
 export type GoogleCalendarProviderOptions = z.input<typeof GoogleCalendarProviderOptionsSchema>;
-export type GoogleDriveFileSystemProviderOptions = z.input<typeof GoogleDriveFileSystemProviderOptionsSchema>;
 export type GoogleAccountEmail = z.input<typeof GoogleAccountGmailSchema>;
 export type GoogleAccountCalendar = z.input<typeof GoogleAccountCalendarSchema>;
 export type GoogleAccountDrive = z.input<typeof GoogleAccountDriveSchema>;

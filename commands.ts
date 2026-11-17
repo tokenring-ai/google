@@ -1,5 +1,6 @@
 import auth from "./commands/google/account/auth.ts";
 import accountGet from "./commands/google/account/get.ts";
 import accountList from "./commands/google/account/list.ts";
+import accountRemove from "./commands/google/account/remove.ts";
 
-export default [accountList, accountGet, auth];
+export default [accountList, accountGet, auth, accountRemove];
